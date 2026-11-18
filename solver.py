@@ -145,27 +145,37 @@ class Solver:
 
     # ------------------------------------------------------------------
     def _collect(self, messages, n: int, res: SolveResult, start: int = 0):
-        """跑 n 次独立采样，返回 (答案, 原始输出, 失败次数)。"""
+        """并行跑 n 次独立采样，返回 (答案列表, 原始输出列表, 失败次数)。
+
+        为什么并行：串行 3 次要把 3 个往返的延迟叠加（约 3×1.2 秒），
+        并行只花最慢那一次的时间；采样之间本来就互不依赖，并行不损失独立性。
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        def one(idx: int):
+            temp = 0.0 if (self.samples == 1 and n == 1) else self.temperature
+            try:
+                out = self.client.chat(messages, temperature=temp, max_tokens=2048)
+                return idx, out, None
+            except Exception as exc:  # noqa: BLE001
+                return idx, None, exc
+
         answers: list[str] = []
         details: list[str] = []
         fails = 0
-        for i in range(n):
-            idx = start + i + 1
-            self.progress(f"第 {idx}/{start + n} 次作答…")
-            try:
-                if self.samples == 1 and n == 1:
-                    out = self.client.chat(messages, temperature=0.0)
-                else:
-                    out = self.client.chat(
-                        messages, temperature=self.temperature, max_tokens=2048
-                    )
-            except Exception as exc:  # noqa: BLE001
+        self.progress(f"{n} 路并行作答中…")
+        idxs = list(range(start + 1, start + n + 1))
+        with ThreadPoolExecutor(max_workers=max(1, min(n, 8))) as pool:
+            results = list(pool.map(one, idxs))
+
+        for idx, out, exc in sorted(results, key=lambda r: r[0]):
+            if exc is not None:
                 fails += 1
                 res.error = str(exc)
                 self.progress(f"第 {idx} 次调用失败：{exc}")
                 continue
             res.calls += 1
-            ans = extract_answer(out)
+            ans = extract_answer(out or "")
             if not ans:
                 fails += 1
                 res.error = "模型没有按格式给出「## 最终答案」"

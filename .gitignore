@@ -19,3 +19,4 @@ _mathlab*.png
 _*.png
 cache.json
 _run.log
+nohup.out

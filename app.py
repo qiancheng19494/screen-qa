@@ -13,6 +13,7 @@ import difflib
 import hashlib
 import json
 import queue
+import re
 import sys
 import tempfile
 import threading
@@ -610,6 +611,9 @@ class App:
         self.b_full.pack(side="left", padx=(7, 0))
         self.b_paste = Pill(bar, "粘贴", self.paste_image, kind="ghost", width=64)
         self.b_paste.pack(side="left", padx=(7, 0))
+        self.b_redo = Pill(bar, "重算", self.redo, kind="ghost", width=60)
+        self.b_redo.pack(side="left", padx=(7, 0))
+        self.b_redo.set_enabled(False)
         self.b_copy = Pill(bar, "复制答案", self.copy_answer, kind="ghost", width=84)
         self.b_copy.pack(side="right")
         self.b_copy.set_enabled(False)
@@ -799,19 +803,27 @@ class App:
         tmp = Path(tempfile.gettempdir()) / f"screen_qa_{int(time.time()*1000)}.png"
         img.save(tmp)
         self.last_image = tmp
+        self._run_path(tmp, bypass=False)
+        return
+
+    def _run_path(self, path, bypass=False):
+        if self.busy:
+            return
         self.busy = True
         self._set_buttons(False)
         self.set_status("处理中…")
         self._set_pulse(True)
 
         cfg = self._current_cfg()
+        if bypass:
+            cfg["cache"] = False
 
         def emit(kind, payload):
             self.q.put((kind, payload))
 
         def work():
             try:
-                payload = run_pipeline(str(tmp), cfg, emit)
+                payload = run_pipeline(str(path), cfg, emit)
             except Exception:  # noqa: BLE001
                 payload = {"ok": False, "stage": "crash",
                            "error": traceback.format_exc()[-900:]}
@@ -1120,6 +1132,7 @@ class App:
 
         self.last_payload = payload
         self.b_copy.set_enabled(True)
+        self.b_redo.set_enabled(True)
         items = payload.get("items") or [res]
         label, key = CONF_CHIP.get(res.confidence, ("⚪ " + res.confidence, "muted"))
         head = res.answer
@@ -1166,7 +1179,12 @@ class App:
         to_copy = res.fill or res.answer
         if self.cfg.get("auto_copy") and to_copy and "调用失败" not in to_copy:
             copied = self._copy_text(to_copy, quiet=True)
-        self._render_multi(items)
+        blanks = [b.strip() for b in re.split(r"[,，;；]", res.fill) if b.strip()] \
+            if res.fill else []
+        if len(items) == 1 and len(blanks) > 1:
+            self._render_blanks(blanks)
+        else:
+            self._render_multi(items)
         if (copied and self.cfg.get("refocus", True) and not self.cont_on
                 and self.prev_hwnd):
             self.root.after(90, lambda: capture.restore_focus(self.prev_hwnd))
@@ -1181,6 +1199,13 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    def redo(self):
+        """重算这一次（跳过缓存，多问几路，置信度低的时候用）。"""
+        if self.busy or not self.last_image:
+            return
+        self.set_status("重算中（跳过缓存）…")
+        self._run_path(self.last_image, bypass=True)
+
     def _render_multi(self, items):
         """一屏多题时，给每题一个「复制」按钮（最多 8 题）。"""
         try:
@@ -1193,6 +1218,19 @@ class App:
                 label = f"{i}·{val[:9]}"
                 Pill(self.multi_bar, label,
                      (lambda v=val: self._copy_text(v)),
+                     kind="flat", height=28, padx=12, font_size=9
+                     ).pack(side="left", padx=(0, 6))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _render_blanks(self, blanks):
+        """多个空（MyMathLab 常见）→ 每个空一个复制按钮。"""
+        try:
+            for w in self.multi_bar.winfo_children():
+                w.destroy()
+            for i, b in enumerate(blanks[:8], 1):
+                Pill(self.multi_bar, f"空{i}·{b[:9]}",
+                     (lambda v=b: self._copy_text(v)),
                      kind="flat", height=28, padx=12, font_size=9
                      ).pack(side="left", padx=(0, 6))
         except Exception:  # noqa: BLE001
