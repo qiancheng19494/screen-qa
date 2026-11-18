@@ -86,8 +86,9 @@ def build_variants(image_path: str, quality: str = "standard") -> list[tuple[str
     if quality == "high":
         w, h = img.size
         short = min(w, h)
-        if short < 2200:  # 小字放大 + 锐化，能明显提升小字号识别率
-            scale = min(3.0, 2200 / max(1, short))
+        # 只对「截取的小区域」做放大锐化：大图（整屏）已经够清晰，再放大会白等 2 秒
+        if short < 1400:
+            scale = min(2.5, 1600 / max(1, short))
             big = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
             out.append(("放大锐化", big.filter(
                 ImageFilter.UnsharpMask(radius=2, percent=140, threshold=3))))
