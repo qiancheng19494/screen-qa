@@ -356,6 +356,8 @@ class App:
         self.root.after(60, lambda: dark_titlebar(self.root))
         self.root.after(160, lambda: snap_bottom_right(self.root))
         self.root.after(700, lambda: snap_bottom_right(self.root))
+        # 被最小化 / Win+D 之后再恢复时，重新贴回右下角
+        self.root.bind("<Map>", self._on_map)
 
         if not self.cfg.get("api_key"):
             self.set_status("⚠ 还没填 API Key —— 点右上角 ⚙")
@@ -371,6 +373,14 @@ class App:
         root.minsize(430, 540)
         self.topmost = bool(self.cfg.get("always_on_top", True))
         root.attributes("-topmost", self.topmost)
+
+    def _on_map(self, _ev=None):
+        """窗口从最小化恢复（或 Win+D 后恢复）时，再贴一次右下角。"""
+        try:
+            if self.root.state() == "normal":
+                self.root.after(80, lambda: snap_bottom_right(self.root))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _load_region(self):
         r = self.cfg.get("cont_bbox")
@@ -956,6 +966,13 @@ class App:
     # ------------------------------------------------------------ 结果渲染
     def _finish(self, payload):
         self.busy = False
+        # 窗口被最小化时也要让答案现身（连续模式下人在看别处）
+        try:
+            if self.root.state() == "iconic":
+                self.root.deiconify()
+                self.root.after(60, lambda: snap_bottom_right(self.root))
+        except Exception:  # noqa: BLE001
+            pass
         self._set_buttons(True)
         if not self.cont_on:
             self._set_pulse(False)
