@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -75,6 +77,35 @@ def _mean_luma(img) -> float:
     return float(ImageStat.Stat(img.convert("L")).mean[0])
 
 
+def _contrast(img) -> float:
+    """灰度标准差，越小说明字和底越接近（低对比度页面/半透明浮层）。"""
+    from PIL import ImageStat
+
+    return float(ImageStat.Stat(img.convert("L")).stddev[0])
+
+
+def _otsu_threshold(hist: list[int], total: int) -> int:
+    """经典 Otsu：找一个让类间方差最大的阈值。"""
+    sum_all = sum(i * hist[i] for i in range(256))
+    sum_b = 0.0
+    w_b = 0
+    best, best_var = 128, -1.0
+    for t in range(256):
+        w_b += hist[t]
+        if w_b == 0:
+            continue
+        w_f = total - w_b
+        if w_f == 0:
+            break
+        sum_b += t * hist[t]
+        m_b = sum_b / w_b
+        m_f = (sum_all - sum_b) / w_f
+        var = w_b * w_f * (m_b - m_f) ** 2
+        if var > best_var:
+            best_var, best = var, t
+    return best
+
+
 def build_variants(image_path: str, quality: str = "standard") -> list[tuple[str, "object"]]:
     """按质量档位生成待识别的候选图（质量越高试的越多、越慢）。"""
     from PIL import Image, ImageFilter, ImageOps
@@ -94,11 +125,17 @@ def build_variants(image_path: str, quality: str = "standard") -> list[tuple[str
                 ImageFilter.UnsharpMask(radius=2, percent=140, threshold=3))))
         if _mean_luma(img) < 110:  # 深色底 → 反色成浅底，Windows OCR 更擅长
             out.append(("反色", ImageOps.invert(img.convert("RGB"))))
+        if _contrast(img) < 25:  # 真正的低对比度（灰字浅底/半透明浮层）→ 二值化拉开黑白
+            gray = img.convert("L")
+            hist = gray.histogram()
+            thr = _otsu_threshold(hist, gray.width * gray.height)
+            out.append(("二值化", gray.point(lambda v, t=thr: 255 if v > t else 0).convert("RGB")))
     return out
 
 
 def _run(ps: str, path: str, timeout_s: int) -> str:
-    out_file = Path(tempfile.gettempdir()) / f"psocr_out_{int(time.time()*1000)}.txt"
+    # 名字必须唯一：候选图并行识别时，同毫秒的固定名字会互相覆盖/删掉对方的产出
+    out_file = Path(tempfile.gettempdir()) / f"psocr_out_{uuid.uuid4().hex}.txt"
     try:
         proc = subprocess.run(
             [ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -118,11 +155,44 @@ def _run(ps: str, path: str, timeout_s: int) -> str:
             pass
 
 
+def _run_batch(ps: str, paths: list[str], timeout_s: int) -> dict[str, str]:
+    """一次 PowerShell 进程识别多张图：省掉每个候选 ~0.4 秒的启动开销。
+
+    路径清单写进 JSON 文件传过去（用 -File 传数组会被 PowerShell 参数绑定拆散）。
+    """
+    import json
+
+    stamp = int(time.time() * 1000)
+    list_file = Path(tempfile.gettempdir()) / f"psocr_list_{stamp}.json"
+    out_file = Path(tempfile.gettempdir()) / f"psocr_batch_{stamp}.json"
+    try:
+        list_file.write_text(json.dumps(paths, ensure_ascii=False), encoding="utf-8")
+        proc = subprocess.run(
+            [ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+             "-File", str(PS1), "-ListFile", str(list_file), "-OutFile", str(out_file)],
+            capture_output=True, timeout=timeout_s,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", "replace").strip()[-400:]
+            raise RuntimeError(f"PowerShell 批量 OCR 失败: {err or proc.returncode}")
+        raw = json.loads(out_file.read_text(encoding="utf-8-sig"))
+        if isinstance(raw, str):  # 只有一张图时 ConvertTo-Json 不产生对象
+            raw = {paths[0]: raw}
+        return {str(k): str(v or "").strip() for k, v in raw.items()}
+    finally:
+        for f in (list_file, out_file):
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def recognize(image_path: str, timeout_s: int = 120, enhance: bool | None = None,
               quality: str = "standard") -> str:
     """识别图片文字。
 
-    quality="high" 时会额外试「放大锐化」「深色反色」，用 text_score 挑最好的一份；
+    quality="high" 时会额外试「放大锐化」「深色反色」「低对比度二值化」，
+    多张图只起一个 PowerShell 进程，用 text_score 挑最好的一份；
     quality="standard" 只在结果太短时才补救一次（快，约 0.6 秒）。
     """
     ps = _powershell()
@@ -134,24 +204,39 @@ def recognize(image_path: str, timeout_s: int = 120, enhance: bool | None = None
     tmp_files: list[str] = []
 
     try:
-        for name, img in build_variants(image_path, q):
-            target = image_path
-            if name != "原图":
-                tmp = Path(tempfile.gettempdir()) / f"psocr_var_{int(time.time()*1000)}_{name}.png"
-                img.save(tmp)
-                tmp_files.append(str(tmp))
-                target = str(tmp)
+        targets: list[tuple[str, str]] = []
+        for i, (name, img) in enumerate(build_variants(image_path, q)):
+            if name == "原图":
+                targets.append((name, image_path))
+                continue
+            tmp = Path(tempfile.gettempdir()) / f"psocr_var_{int(time.time() * 1000)}_{i}.png"
+            img.save(tmp)
+            tmp_files.append(str(tmp))
+            targets.append((name, str(tmp)))
+
+        # 候选图并行识别：3 个候选串行约 1.4 秒 → 并行约 0.6 秒（每张图各起一个 PowerShell 进程）
+        results: dict[str, str] = {}
+        if len(targets) == 1:
             try:
-                text = _run(ps, target, timeout_s)
+                results[targets[0][1]] = _run(ps, targets[0][1], timeout_s)
             except Exception:  # noqa: BLE001
+                results = {}
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(targets), 4)) as ex:
+                futures = {ex.submit(_run, ps, p, timeout_s): p for _, p in targets}
+                for fut, p in futures.items():
+                    try:
+                        results[p] = fut.result(timeout=timeout_s)
+                    except Exception:  # noqa: BLE001  某个候选失败不影响其它候选
+                        continue
+
+        for name, target in targets:
+            text = results.get(target)
+            if text is None:
                 continue
             sc = text_score(text)
             if sc > best_score:
                 best_text, best_score = text, sc
-            # 标准档：原图就够用就别折腾
-            if q == "standard" and name == "原图" and len(
-                    _GOOD_RE.findall(text)) >= 12 and enhance is not True:
-                break
     finally:
         for f in tmp_files:
             try:

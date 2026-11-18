@@ -157,6 +157,20 @@ def _same_screen(a: str, b: str) -> bool:
     return difflib.SequenceMatcher(None, a, b).ratio() >= 0.97
 
 
+def _same_problem(a: str, b: str) -> bool:
+    """是不是「同一道题」：允许比 _same_screen 更大的差异（光标、计时器、按钮文案微变）。"""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if min(la, lb) < 12:
+        return False
+    if abs(la - lb) > max(12, int(max(la, lb) * 0.25)):
+        return False
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.93
+
+
 # ---------------------------------------------------------------- 核心流程
 def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     t0 = time.time()
@@ -330,6 +344,7 @@ class App:
         self.cont_region = self._load_region()
         self.stop_evt = threading.Event()
         self.cont_sig = ""
+        self.last_problem = ""
         self._pulse_job = None
 
         capture.enable_dpi_awareness()
@@ -558,6 +573,27 @@ class App:
                 highlightbackground=UI["border"]))
         except Exception:  # noqa: BLE001
             pass
+
+    # ------------------------------------------------------------ 提示音
+    def _beep(self, kind: str = "done"):
+        """听觉反馈：new=发现新题 / done=答案好了 / warn=出错（设置里可关）。"""
+        if not self.cfg.get("sound", True):
+            return
+
+        def play():
+            try:
+                import winsound
+                if kind == "new":
+                    winsound.Beep(880, 70)
+                    winsound.Beep(1180, 90)
+                elif kind == "warn":
+                    winsound.MessageBeep(0x00000030)  # MB_ICONWARNING
+                else:
+                    winsound.MessageBeep(0x00000040)  # MB_ICONASTERISK
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=play, daemon=True).start()
 
     def toggle_topmost(self):
         self.topmost = not self.topmost
@@ -826,6 +862,16 @@ class App:
             return
         self.cont_sig = sig
 
+        # 同一道题（只是光标闪、计时器跳之类变了）就别再花钱解一遍
+        if (self.cfg.get("dedupe", True) and self.last_problem
+                and _same_problem(sig, self.last_problem)):
+            self.q.put(("status", "还是刚才那道题，跳过"))
+            self._cont_log("同一道题，跳过（避免重复作答）")
+            self.stop_evt.wait(max(0.5, interval - (time.time() - t0)))
+            return
+        self.last_problem = sig
+        self._beep("new")
+
         self.q.put(("busy", True))
         cfg = self._current_cfg()
         try:
@@ -923,6 +969,7 @@ class App:
             self.text.insert("end", "❌ 失败：\n", "err")
             self.text.insert("end", str(payload.get("error")) + "\n")
             self.set_status("失败 · 见详情")
+            self._beep("warn")
             return
 
         res = payload["result"]
@@ -934,6 +981,7 @@ class App:
             self.text.delete("1.0", "end")
             self.text.insert("end", f"❌ {res.error}\n", "err")
             self.set_status("调用失败")
+            self._beep("warn")
             return
 
         self.last_payload = payload
@@ -966,6 +1014,7 @@ class App:
             copied = self._copy_text(res.answer, quiet=True)
         tail = "  ·  📋 已自动复制" if copied else ""
         self.set_status(f"{label} · 总 {payload['elapsed']:.1f}s{tail}")
+        self._beep("done")
         try:
             cfg_mod.save_history(
                 payload["text"], format_answer(payload),
@@ -1002,6 +1051,7 @@ class App:
     # ------------------------------------------------------------ 设置
     def open_settings(self):
         bg, card = UI["bg"], UI["card"]
+        card2 = UI["card2"]
         win = tk.Toplevel(self.root)
         win.title("设置")
         win.configure(bg=bg)
@@ -1014,7 +1064,7 @@ class App:
         frm = tk.Frame(win, bg=bg)
         frm.pack(fill="both", expand=True, padx=18, pady=16)
         win.update_idletasks()
-        w, h = 560, 500
+        w, h = 560, 520
         px = self.root.winfo_rootx() + self.root.winfo_width() - w
         py = self.root.winfo_rooty() + self.root.winfo_height() - h
         win.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
@@ -1046,9 +1096,9 @@ class App:
         tk.Label(frm, text="识别精度", bg=bg, fg=UI["dim"], font=(FONT, 9),
                  anchor="w").grid(row=4, column=0, sticky="w", pady=6)
         qual_var = tk.StringVar(
-            value="高精度（更准，慢约 1 秒）" if str(self.cfg.get("ocr_quality", "high")) == "high"
+            value="高精度（更准，并行）" if str(self.cfg.get("ocr_quality", "high")) == "high"
             else "标准（更快）")
-        qual = tk.OptionMenu(frm, qual_var, "高精度（更准，慢约 1 秒）", "标准（更快）")
+        qual = tk.OptionMenu(frm, qual_var, "高精度（更准，并行）", "标准（更快）")
         qual.configure(bg=card, fg=UI["text"], activebackground=card2,
                        activeforeground=UI["text"], highlightthickness=1,
                        highlightbackground=UI["border"], bd=0, font=(FONT, 9),
@@ -1062,13 +1112,18 @@ class App:
         top_var = tk.BooleanVar(value=bool(self.cfg.get("always_on_top", True)))
         copy_var = tk.BooleanVar(value=bool(self.cfg.get("auto_copy", True)))
         esc_var = tk.BooleanVar(value=bool(self.cfg.get("escalate", True)))
-        for text, var in (("窗口置顶", top_var),
-                          ("出答案自动复制", copy_var),
-                          ("分歧时追加采样（更准）", esc_var)):
+        sound_var = tk.BooleanVar(value=bool(self.cfg.get("sound", True)))
+        dedupe_var = tk.BooleanVar(value=bool(self.cfg.get("dedupe", True)))
+        for i, (text, var) in enumerate((("窗口置顶", top_var),
+                                         ("出答案自动复制", copy_var),
+                                         ("分歧追加采样", esc_var),
+                                         ("新题/出答案响铃", sound_var),
+                                         ("同题不重复作答", dedupe_var))):
             tk.Checkbutton(checks, text=text, variable=var, bg=bg, fg=UI["dim"],
                            selectcolor=card, activebackground=bg,
                            activeforeground=UI["text"], bd=0, highlightthickness=0,
-                           font=(FONT, 9)).pack(side="left", padx=(0, 18))
+                           font=(FONT, 9)).grid(row=i // 3, column=i % 3,
+                                                sticky="w", padx=(0, 16), pady=2)
 
         row6 = tk.Frame(frm, bg=bg)
         row6.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
@@ -1107,6 +1162,8 @@ class App:
             self.cfg["always_on_top"] = bool(top_var.get())
             self.cfg["auto_copy"] = bool(copy_var.get())
             self.cfg["escalate"] = bool(esc_var.get())
+            self.cfg["sound"] = bool(sound_var.get())
+            self.cfg["dedupe"] = bool(dedupe_var.get())
             self.cfg["ocr_quality"] = (
                 "high" if qual_var.get().startswith("高精度") else "standard")
             cfg_mod.save(self.cfg)

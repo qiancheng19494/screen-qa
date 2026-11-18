@@ -1,10 +1,15 @@
 param(
-    [Parameter(Mandatory=$true)][string]$Path,
-    [string]$OutFile = ""
+    [string]$Path = "",
+    [string]$OutFile = "",
+    [string]$ListFile = "",
+    [string[]]$PathList = @()
 )
 
 # Windows 自带 OCR（Windows.Media.Ocr），通过 .NET 流读取图片，
 # 避免 StorageFile 的 appmodel 权限问题。结果写入 UTF-8 文件（避免控制台编码问题）。
+# 单图：-Path 图 -OutFile out.txt  → 纯文本
+# 批量：-PathList a.png,b.png -OutFile out.json → JSON {路径: 文本}
+#       （批量只起一个进程，省掉每次 ~0.4 秒的 PowerShell/WinRT 启动开销）
 
 $ErrorActionPreference = 'Stop'
 
@@ -27,23 +32,50 @@ function Await($WinRtTask, $ResultType) {
 $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
 if ($null -eq $engine) { Write-Error 'NO_OCR_ENGINE'; exit 3 }
 
-$fs = [System.IO.File]::OpenRead((Resolve-Path -LiteralPath $Path).Path)
-try {
-    $ras = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($fs)
-    $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])
-    $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-    $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-} finally {
-    $fs.Dispose()
+function Ocr-One([string]$p) {
+    $fs = [System.IO.File]::OpenRead((Resolve-Path -LiteralPath $p).Path)
+    try {
+        $ras = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($fs)
+        $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])
+        $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+        $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+    } finally {
+        $fs.Dispose()
+    }
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $result.Lines) { $lines.Add($line.Text) }
+    return ($lines -join "`n")
 }
 
-$lines = New-Object System.Collections.Generic.List[string]
-foreach ($line in $result.Lines) { $lines.Add($line.Text) }
-$text = $lines -join "`n"
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+
+# 批量模式的路径清单从 JSON 文件读（命令行直接传数组会被 -File 的参数绑定拆散）
+if (-not [string]::IsNullOrEmpty($ListFile)) {
+    $raw = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $ListFile).Path, $utf8)
+    $PathList = @($raw | ConvertFrom-Json)
+}
+
+if ($PathList -and $PathList.Count -gt 0) {
+    $map = [ordered]@{}
+    foreach ($p in $PathList) {
+        try { $map[$p] = (Ocr-One $p) } catch { $map[$p] = "" }
+    }
+    $json = $map | ConvertTo-Json -Compress
+    if ([string]::IsNullOrEmpty($OutFile)) {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        Write-Output $json
+    } else {
+        [System.IO.File]::WriteAllText($OutFile, $json, $utf8)
+    }
+    exit 0
+}
+
+if ([string]::IsNullOrEmpty($Path)) { Write-Error 'NO_INPUT'; exit 4 }
+$text = Ocr-One $Path
 
 if ([string]::IsNullOrEmpty($OutFile)) {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     Write-Output $text
 } else {
-    [System.IO.File]::WriteAllText($OutFile, $text, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($OutFile, $text, $utf8)
 }
