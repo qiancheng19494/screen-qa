@@ -1,4 +1,12 @@
-"""用 GitHub REST API 推一次提交（本机 git 的 schannel 握手被沙箱挡住，走 HTTP API）。"""
+"""用 GitHub REST API 把当前仓库推一次提交。
+
+用途：本机 git push 走 schannel 时报
+`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`（沙箱挡住凭据/TLS），
+但 HTTPS API 是通的，所以改用 GitHub Git Data API 直接建 commit + 更新分支。
+
+用法：
+    python tools/push_via_api.py "提交说明"
+"""
 import base64, json, subprocess, sys, urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -51,8 +59,7 @@ for path in files:
     print(f"  ✓ {path} ({len(content)} B)")
 
 nt = call("POST", f"{API}/git/trees", {"tree": tree})
-msg = (subprocess.run('git log -1 --pretty=%B', capture_output=True, text=True,
-                      shell=True).stdout or "screen-qa v2").strip()
+msg = (sys.argv[1] if len(sys.argv) > 1 else "update").strip()
 commit = call("POST", f"{API}/git/commits",
               {"message": msg, "tree": nt["sha"], "parents": [parent_sha]})
 print("commit:", commit["sha"])
