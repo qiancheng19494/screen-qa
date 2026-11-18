@@ -2,6 +2,8 @@
 
 > 圈一下屏幕上的题目，DeepSeek 自动读题、作答，并把答案自动复制到剪贴板。
 > Windows 桌面小程序，Python + tkinter，无需安装 OCR 引擎（用系统自带 `Windows.Media.Ocr`）。
+>
+> 📖 **想看懂原理、准确度怎么来的、为什么做不到「≤1%」、考试怎么用** → [`docs/详解.md`](docs/详解.md)
 
 ## 它是什么
 
@@ -135,9 +137,24 @@ Windows 用户也可以克隆后直接双击 `启动.bat`（无控制台窗口�
 | `deepseek_api.py` | DeepSeek HTTP 客户端（纯标准库 urllib） |
 | `config.py` | 配置读写与历史存档 |
 | `hotkey.py` | 全局热键（RegisterHotKey） |
-| `questions.py` | 把一屏多题的文字切成一道一道（编号识别，切不动就不切） |
+| `questions.py` | 一屏多题切分 + 题号解析（`Question 9 of 12` → `第 9/12 题`） |
 | `tools/launch_detached.py` | 从终端/脚本里把界面拉到后台启动（不占控制台） |
 | `tools/push_via_api.py` | 本机 git push 不通时，用 GitHub API 提交代码 |
+| `docs/详解.md` | **完整文本解释**：数据流、代码地图、准确度机制与实测、速度账本、考试流程、故障处置、隐私 |
+
+## 一次框选背后发生了什么（速览）
+
+```
+Ctrl+Alt+Q 框选 → 截图
+   → 读字：视觉模型（可选）失败则降级 Windows.Media.Ocr
+          high 档并行跑「原图 / 放大锐化 / 深浅反色(+低对比度二值化)」三候选，按分数取最优
+   → 分题：按题号切（切不动就整段当一题）
+   → 作答：3 路并行独立采样 → 多数投票 → 分歧再追 2 路 → 交叉审核 → 置信度 🟢/🟡/🔴
+   → 清洗：x = 5 → 5 ；２，３ → 2, 3 ；去掉 $ 和句末句点
+   → 落地：答案卡 + 自动复制 + 焦点还原 + history/ + cache.json
+```
+
+细节与实测数字见 [`docs/详解.md`](docs/详解.md)。
 
 ## 可选：接视觉大模型
 
