@@ -20,3 +20,7 @@ _*.png
 cache.json
 _run.log
 nohup.out
+
+_dist_test/
+_pub_test/
+__pycache__/
