@@ -67,3 +67,29 @@ def split_questions(text: str) -> list[str]:
 
     merged = [c for c in merged if len(re.sub(r"\s", "", c)) >= _MIN_BODY]
     return merged if len(merged) >= 2 else []
+
+
+_QNO_RE = re.compile(r"(?:Question|QUESTION|Question\s*#|Q)\s*(\d{1,3})\s*(?:of|/|／)\s*(\d(?:\s*\d){0,2})")
+_QNO_ZH = re.compile(r"第\s*(\d{1,3})\s*题\s*(?:[/／]\s*(\d{1,3}))?")
+
+
+def question_number(text: str):
+    """从 OCR 文字里认出「第几题 / 共几题」（MyMathLab 顶部会写 Question 7 of 12）。
+
+    返回 (当前, 总数) —— 总数认不出就给 None；完全没有题号返回 None。
+    用途：连续模式靠题号判断"换题了没有"，比纯文字相似度准。
+    """
+    if not text:
+        return None
+    m = _QNO_RE.search(text)
+    if m:
+        cur = int(m.group(1))
+        total = int(re.sub(r"\s+", "", m.group(2)))
+        # OCR 常把 "12" 断成 "1 2"，那样会得到 total < cur，此时总数不可信
+        return cur, (total if total > cur else None)
+    m = _QNO_ZH.search(text)
+    if m:
+        cur = int(m.group(1))
+        total = int(m.group(2)) if m.group(2) else None
+        return cur, (total if total and total > cur else None)
+    return None

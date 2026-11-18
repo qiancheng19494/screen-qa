@@ -231,6 +231,15 @@ def _dict_to_res(d: dict) -> SolveResult:
     return SolveResult(**data)
 
 
+def _fast_downgrade(items, cfg):
+    """极速模式只问了一次、没交叉复核，标"高"是不诚实的，降到"中"。"""
+    if not cfg.get("fast"):
+        return
+    for it in items:
+        if it.confidence.startswith("高"):
+            it.confidence = "中"
+
+
 def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     t0 = time.time()
 
@@ -246,6 +255,10 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     if not rr.text:
         return {"ok": False, "stage": "read", "error": rr.error,
                 "elapsed": time.time() - t0}
+    if len(rr.text.strip()) < 12:
+        return {"ok": False, "stage": "read", "elapsed": time.time() - t0,
+                "error": (f"只识别到 {len(rr.text.strip())} 个字，基本等于没框到题目。"
+                          f"\n把题目（含题干和选项）框大一点，或按 Ctrl+Alt+W 整屏。")}
     emit("log", f"识别完成（{rr.backend}，{len(rr.text)} 字，{rr.elapsed:.1f}s）")
 
     key = _cache_key(rr.text, cfg)
@@ -255,6 +268,7 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
         hit = load_cache().get(key)
         if hit and hit.get("items"):
             items = [_dict_to_res(d) for d in hit["items"]]
+            _fast_downgrade(items, cfg)
             emit("log", f"⚡ 命中缓存（省下 {sum(i.calls for i in items)} 次模型调用）")
             return {
                 "ok": True, "text": rr.text, "backend": rr.backend,
@@ -288,6 +302,8 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     else:
         emit("log", "DeepSeek 思考中…")
         items.append(solver.solve(rr.text))
+
+    _fast_downgrade(items, cfg)
 
     payload = {
         "ok": True,
@@ -456,6 +472,7 @@ class App:
         self.stop_evt = threading.Event()
         self.cont_sig = ""
         self.last_problem = ""
+        self.cont_qno = None
         self._pulse_job = None
 
         capture.enable_dpi_awareness()
@@ -838,6 +855,10 @@ class App:
         cfg["model"] = self.model_var.get()
         cfg["samples"] = int(self.samples_var.get())
         cfg["verify"] = bool(self.verify_var.get())
+        if cfg.get("fast"):
+            cfg["samples"] = 1        # 极速：只问一次
+            cfg["verify"] = False     # 不做交叉审核
+            cfg["escalate"] = False   # 不追加采样
         return cfg
 
     def _set_buttons(self, enabled: bool):
@@ -1000,15 +1021,20 @@ class App:
             self.stop_evt.wait(max(0.5, interval - (time.time() - t0)))
             return
         self.cont_sig = sig
+        qno = qsplit.question_number(quick.text)
+        if qno and qno[1]:
+            self.q.put(("status", f"第 {qno[0]}/{qno[1]} 题 · 对比画面…"))
 
         # 同一道题（只是光标闪、计时器跳之类变了）就别再花钱解一遍
+        same_no = bool(qno and self.cont_qno and qno[0] == self.cont_qno[0])
         if (self.cfg.get("dedupe", True) and self.last_problem
-                and _same_problem(sig, self.last_problem)):
+                and (same_no or _same_problem(sig, self.last_problem))):
             self.q.put(("status", "还是刚才那道题，跳过"))
             self._cont_log("同一道题，跳过（避免重复作答）")
             self.stop_evt.wait(max(0.5, interval - (time.time() - t0)))
             return
         self.last_problem = sig
+        self.cont_qno = qno
         self._beep("new")
 
         self.q.put(("busy", True))
@@ -1189,7 +1215,11 @@ class App:
                 and self.prev_hwnd):
             self.root.after(90, lambda: capture.restore_focus(self.prev_hwnd))
         tail = "  ·  📋 已自动复制" if copied else ""
-        self.set_status(f"{label} · 总 {payload['elapsed']:.1f}s{tail}")
+        qno = qsplit.question_number(payload.get("text") or "")
+        qtag = (f"第 {qno[0]}/{qno[1]} 题 · " if qno and qno[1]
+                else (f"第 {qno[0]} 题 · " if qno else ""))
+        mode = " · 极速" if self.cfg.get("fast") else ""
+        self.set_status(f"{qtag}{label}{mode} · 总 {payload['elapsed']:.1f}s{tail}")
         self._beep("done")
         try:
             cfg_mod.save_history(
@@ -1331,6 +1361,7 @@ class App:
         cache_var = tk.BooleanVar(value=bool(self.cfg.get("cache", True)))
         multi_var = tk.BooleanVar(value=bool(self.cfg.get("multi", True)))
         refocus_var = tk.BooleanVar(value=bool(self.cfg.get("refocus", True)))
+        fast_var = tk.BooleanVar(value=bool(self.cfg.get("fast", False)))
         for i, (text, var) in enumerate((("窗口置顶", top_var),
                                          ("出答案自动复制", copy_var),
                                          ("分歧追加采样", esc_var),
@@ -1338,7 +1369,8 @@ class App:
                                          ("同题不重复作答", dedupe_var),
                                          ("同题缓存秒出", cache_var),
                                          ("一屏多题分别作答", multi_var),
-                                         ("答完回到原窗口", refocus_var))):
+                                         ("答完回到原窗口", refocus_var),
+                                         ("极速模式", fast_var))):
             tk.Checkbutton(checks, text=text, variable=var, bg=bg, fg=UI["dim"],
                            selectcolor=card, activebackground=bg,
                            activeforeground=UI["text"], bd=0, highlightthickness=0,
@@ -1390,6 +1422,7 @@ class App:
             self.cfg["cache"] = bool(cache_var.get())
             self.cfg["multi"] = bool(multi_var.get())
             self.cfg["refocus"] = bool(refocus_var.get())
+            self.cfg["fast"] = bool(fast_var.get())
             self.cfg["ocr_quality"] = (
                 "high" if qual_var.get().startswith("高精度") else "standard")
             cfg_mod.save(self.cfg)

@@ -60,6 +60,33 @@ _FILL_RE = re.compile(r"##\s*填入答案\s*\n+(.+?)(?:\n\s*##|$)", re.S)
 _FILL_INLINE_RE = re.compile(r"填入答案[：:]\s*(.+)")
 
 
+_FULL2HALF = {"，": ",", "；": ";", "：": ":", "（": "(", "）": ")",
+              "－": "-", "−": "-", "–": "-", "％": "%", "　": " ",
+              "．": ".", "０": "0", "１": "1", "２": "2", "３": "3",
+              "４": "4", "５": "5", "６": "6", "７": "7", "８": "8", "９": "9"}
+
+
+def clean_fill(raw: str) -> str:
+    """把「填入答案」洗成能直接粘进输入框的样子。
+
+    做三件事：全角标点/数字转半角；去掉 `x =` / `y =` 这种变量前缀
+    （MyMathLab 的填空只认值本身）；压缩多余空格、去掉句末句点。
+    复合值（如 `2, 3`、`(2,3)`、不等式 `x > 3`）保持原样。
+    """
+    if not raw:
+        return ""
+    s = "".join(_FULL2HALF.get(ch, ch) for ch in raw.strip())
+    s = s.replace("$", "").strip()
+    # 只有"变量 = 数值"这种简单形态才去掉前缀
+    m = re.match(r"^[a-zA-Z]\s*=\s*(.+)$", s)
+    if m and not re.search(r"[a-zA-Z]", m.group(1)):
+        s = m.group(1).strip()
+    s = re.sub(r"\s*,\s*", ", ", s)
+    s = re.sub(r"[ \t]{2,}", " ", s).strip()
+    s = s.rstrip("。.")
+    return s[:200]
+
+
 def extract_fill(text: str) -> str:
     """抠出「填入答案」（MyMathLab/Canvas 输入框要原样敲的值）。没写就返回空串。"""
     if not text:
@@ -75,7 +102,7 @@ def extract_fill(text: str) -> str:
         return ""
     # 去掉模型偶尔加的前缀
     raw = re.sub(r"^填入(答案)?[：:]\s*", "", raw)
-    return raw[:200]
+    return clean_fill(raw)
 
 _ANS_RE = re.compile(r"##\s*最终答案\s*\n+(.+?)(?:\n|$)", re.S)
 _ANS_INLINE_RE = re.compile(r"最终答案[：:]\s*(.+)")

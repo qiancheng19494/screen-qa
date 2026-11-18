@@ -32,7 +32,8 @@ DEFAULTS = {
     "dedupe": True,             # 连续模式下「同一道题」不重复作答（省时间省调用）
     "cache": True,              # 同一道题第二次出现直接秒出（不再调模型）
     "multi": True,              # 一屏多题时自动切题、逐题作答
-    "refocus": True,            # 答完把焦点还给原来那个窗口（考试时直接 Ctrl+V）
+    "refocus": True,
+    "fast": False,            # 答完把焦点还给原来那个窗口（考试时直接 Ctrl+V）
     # 提示
     "sound": True,              # 发现新题 / 出答案 / 出错时响一声
 }
