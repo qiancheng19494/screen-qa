@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import ctypes
 import difflib
+import hashlib
+import json
 import queue
 import sys
 import tempfile
@@ -28,9 +30,10 @@ if str(ROOT) not in sys.path:
 
 import capture  # noqa: E402
 import config as cfg_mod  # noqa: E402
+import questions as qsplit  # noqa: E402
 import reader  # noqa: E402
 from deepseek_api import DeepSeekClient  # noqa: E402
-from solver import Solver  # noqa: E402
+from solver import SolveResult, Solver  # noqa: E402
 
 APP_TITLE = "屏幕问答 · DeepSeek"
 
@@ -172,6 +175,61 @@ def _same_problem(a: str, b: str) -> bool:
 
 
 # ---------------------------------------------------------------- 核心流程
+CACHE_PATH = ROOT / "cache.json"
+CACHE_LIMIT = 300
+
+
+def _cache_key(text: str, cfg: dict) -> str:
+    raw = "|".join([_normalize(text), str(cfg.get("model", "")),
+                    str(cfg.get("samples", "")), str(cfg.get("verify", "")),
+                    str(cfg.get("multi", True))])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def load_cache() -> dict:
+    try:
+        raw = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_cache(data: dict):
+    try:
+        if len(data) > CACHE_LIMIT:
+            keep = sorted(data.items(), key=lambda kv: kv[1].get("ts", 0),
+                          reverse=True)[:CACHE_LIMIT]
+            data = dict(keep)
+        CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1),
+                              encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def clear_cache() -> int:
+    n = len(load_cache())
+    try:
+        CACHE_PATH.unlink()
+    except Exception:  # noqa: BLE001
+        pass
+    return n
+
+
+def _res_to_dict(r: SolveResult) -> dict:
+    return {
+        "question_text": r.question_text, "answer": r.answer, "fill": r.fill,
+        "reasoning": r.reasoning, "samples": list(r.samples),
+        "sample_details": list(r.sample_details), "confidence": r.confidence,
+        "agreement": r.agreement, "verified": r.verified, "elapsed": r.elapsed,
+        "calls": r.calls, "error": r.error, "warnings": list(r.warnings),
+    }
+
+
+def _dict_to_res(d: dict) -> SolveResult:
+    data = {k: v for k, v in d.items() if k in SolveResult.__annotations__}
+    return SolveResult(**data)
+
+
 def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     t0 = time.time()
 
@@ -189,6 +247,21 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
                 "elapsed": time.time() - t0}
     emit("log", f"识别完成（{rr.backend}，{len(rr.text)} 字，{rr.elapsed:.1f}s）")
 
+    key = _cache_key(rr.text, cfg)
+
+    # ---- 缓存命中：同一道题做过就直接秒出，不再花钱调模型
+    if cfg.get("cache", True):
+        hit = load_cache().get(key)
+        if hit and hit.get("items"):
+            items = [_dict_to_res(d) for d in hit["items"]]
+            emit("log", f"⚡ 命中缓存（省下 {sum(i.calls for i in items)} 次模型调用）")
+            return {
+                "ok": True, "text": rr.text, "backend": rr.backend,
+                "read_elapsed": rr.elapsed, "result": items[0], "items": items,
+                "elapsed": time.time() - t0, "warnings": rr.warnings,
+                "cached": True, "cached_at": hit.get("ts", 0),
+            }
+
     client = DeepSeekClient(
         api_key=cfg.get("api_key", ""),
         base_url=cfg.get("base_url", "https://api.deepseek.com"),
@@ -202,36 +275,72 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
         progress=lambda m: emit("log", m),
         escalate=bool(cfg.get("escalate", True)),
     )
-    emit("log", "DeepSeek 思考中…")
-    res = solver.solve(rr.text)
 
-    return {
+    # ---- 一屏多题：切成一题一题，分别走同一套采样+投票+审核
+    chunks = qsplit.split_questions(rr.text) if cfg.get("multi", True) else []
+    items: list[SolveResult] = []
+    if len(chunks) >= 2:
+        emit("log", f"检测到 {len(chunks)} 道题，逐题作答…")
+        for i, q in enumerate(chunks, 1):
+            emit("log", f"—— 第 {i}/{len(chunks)} 题 ——")
+            items.append(solver.solve(q))
+    else:
+        emit("log", "DeepSeek 思考中…")
+        items.append(solver.solve(rr.text))
+
+    payload = {
         "ok": True,
         "text": rr.text,
         "backend": rr.backend,
         "read_elapsed": rr.elapsed,
-        "result": res,
+        "result": items[0],
+        "items": items,
         "elapsed": time.time() - t0,
         "warnings": rr.warnings,
+        "cached": False,
     }
+
+    # ---- 成功作答才写缓存（失败的不缓存，免得下次直接给出错误结论）
+    if (cfg.get("cache", True) and items
+            and not items[0].answer.startswith("（调用失败）")):
+        try:
+            data = load_cache()
+            data[key] = {"ts": time.time(), "text": rr.text[:4000],
+                         "items": [_res_to_dict(r) for r in items]}
+            save_cache(data)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return payload
 
 
 def format_answer(payload: dict) -> str:
     res = payload["result"]
+    items = payload.get("items") or [res]
     if res.answer.startswith("（调用失败）"):
         return f"❌ 调用 DeepSeek 失败：{res.error}"
     icon = {"高": "🟢", "中": "🟡", "存疑": "🔴"}.get(res.confidence, "⚪")
-    lines = [
-        f"【最终答案】{res.answer}",
-        f"{icon} 置信度：{res.confidence}（样本一致度 {res.agreement:.0%}，"
-        f"{res.calls} 次模型调用，{res.elapsed:.1f}s）",
-        "",
-        "—— 详细推理 ——",
-        (res.reasoning or "（无）").strip(),
-    ]
+    lines = []
+    if len(items) > 1:
+        lines.append(f"【共 {len(items)} 道题】")
+        for i, r in enumerate(items, 1):
+            extra = f"   → 填入：{r.fill}" if r.fill else ""
+            lines.append(f"{i}. {r.answer}{extra}")
+        lines.append("")
+    lines.append(f"【最终答案】{res.answer}")
+    if res.fill:
+        lines.append(f"【填入答案】{res.fill}")
+    if payload.get("cached"):
+        lines.append(f"⚡ 命中缓存：直接秒出（当初算了 {res.elapsed:.1f}s / "
+                     f"{res.calls} 次调用，本次只花 {payload['elapsed']:.1f}s）")
+    else:
+        lines.append(f"{icon} 置信度：{res.confidence}（样本一致度 "
+                     f"{res.agreement:.0%}，{res.calls} 次模型调用，"
+                     f"{res.elapsed:.1f}s）")
+    lines += ["", "—— 详细推理 ——", (res.reasoning or "（无）").strip()]
     if len(res.samples) > 1:
         lines += ["", "—— 各次采样 ——"]
-        lines += [f"{i}. {s}" for i, s in enumerate(res.samples, 1)]
+        lines += [f"{i}. {x}" for i, x in enumerate(res.samples, 1)]
     return "\n".join(lines)
 
 
@@ -339,6 +448,7 @@ class App:
         self.busy = False
         self.hk = None
         self.last_payload = None
+        self.prev_hwnd = 0
         self.last_image = None
         self.cont_on = False
         self.cont_region = self._load_region()
@@ -504,6 +614,10 @@ class App:
         self.b_copy.pack(side="right")
         self.b_copy.set_enabled(False)
 
+        # 一屏多题时，这里会冒出「复制第 N 题」按钮；空的时候不占高度
+        self.multi_bar = tk.Frame(wrap, bg=bg)
+        self.multi_bar.pack(fill="x", before=bar)
+
         bar2 = tk.Frame(wrap, bg=bg)
         bar2.pack(fill="x", pady=(8, 0), before=det)
         self.b_cont = Pill(bar2, "▶  连续截图", self.toggle_continuous,
@@ -620,6 +734,7 @@ class App:
     def shot_region(self):
         if self.busy:
             return
+        self.prev_hwnd = capture.foreground_window()
         try:
             sel = capture.RegionSelector(self.root)
             img = sel.select()
@@ -633,6 +748,7 @@ class App:
     def shot_full(self):
         if self.busy:
             return
+        self.prev_hwnd = capture.foreground_window()
         try:
             self._start(self._grab_screen())
         except Exception as exc:  # noqa: BLE001
@@ -659,6 +775,7 @@ class App:
     def paste_image(self):
         if self.busy:
             return
+        self.prev_hwnd = capture.foreground_window()
         try:
             from PIL import Image, ImageGrab
 
@@ -1003,19 +1120,38 @@ class App:
 
         self.last_payload = payload
         self.b_copy.set_enabled(True)
+        items = payload.get("items") or [res]
         label, key = CONF_CHIP.get(res.confidence, ("⚪ " + res.confidence, "muted"))
-        self.ans.configure(text=res.answer, fg=UI["text"])
+        head = res.answer
+        if len(items) > 1:
+            head = f"第 1/{len(items)} 题：{res.answer}"
+        self.ans.configure(text=head, fg=UI["text"])
         self.chip.configure(text=label, fg=UI.get(key, UI["muted"]),
                             bg=UI.get(key + "_bg", UI["card2"]))
-        self.meta.configure(
-            text=f"一致度 {res.agreement:.0%} · {res.calls} 次调用 · "
-                 f"{payload['elapsed']:.1f}s · {payload.get('backend', '')}")
+        bits = [f"一致度 {res.agreement:.0%}",
+                f"{sum(i.calls for i in items)} 次调用",
+                f"{payload['elapsed']:.1f}s",
+                str(payload.get("backend", ""))]
+        if len(items) > 1:
+            bits.insert(0, f"共 {len(items)} 题")
+        if payload.get("cached"):
+            bits.insert(0, "⚡ 缓存")
+        self.meta.configure(text=" · ".join(bits))
         self._flash(UI.get(key, UI["accent"]))
 
         self.text.delete("1.0", "end")
         for w in payload.get("warnings") or []:
             self.text.insert("end", f"⚠ {w}\n", "warn")
-        self.text.insert("end", "推理\n", "h")
+        if len(items) > 1:
+            self.text.insert("end", "各题答案\n", "h")
+            for i, r in enumerate(items, 1):
+                extra = f"   → 填入：{r.fill}" if r.fill else ""
+                self.text.insert("end", f"{i}. {r.answer}{extra}\n", "answer")
+            self.text.insert("end", "第 1 题推理\n", "h")
+        else:
+            if res.fill:
+                self.text.insert("end", f"填入答案：{res.fill}\n", "answer")
+            self.text.insert("end", "推理\n", "h")
         self.text.insert("end", (res.reasoning or "（无）").strip() + "\n")
         if len(res.samples) > 1:
             self.text.insert("end", "各次采样\n", "h")
@@ -1027,8 +1163,13 @@ class App:
 
         # 自动复制：只要拿到答案就进剪贴板（用户要求），不看置信度
         copied = False
-        if self.cfg.get("auto_copy") and res.answer and "调用失败" not in res.answer:
-            copied = self._copy_text(res.answer, quiet=True)
+        to_copy = res.fill or res.answer
+        if self.cfg.get("auto_copy") and to_copy and "调用失败" not in to_copy:
+            copied = self._copy_text(to_copy, quiet=True)
+        self._render_multi(items)
+        if (copied and self.cfg.get("refocus", True) and not self.cont_on
+                and self.prev_hwnd):
+            self.root.after(90, lambda: capture.restore_focus(self.prev_hwnd))
         tail = "  ·  📋 已自动复制" if copied else ""
         self.set_status(f"{label} · 总 {payload['elapsed']:.1f}s{tail}")
         self._beep("done")
@@ -1037,6 +1178,23 @@ class App:
                 payload["text"], format_answer(payload),
                 f"reader={payload.get('backend', '')} model={self.model_var.get()}"
                 f" conf={res.confidence}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _render_multi(self, items):
+        """一屏多题时，给每题一个「复制」按钮（最多 8 题）。"""
+        try:
+            for w in self.multi_bar.winfo_children():
+                w.destroy()
+            if len(items) < 2:
+                return
+            for i, r in enumerate(items[:8], 1):
+                val = r.fill or r.answer
+                label = f"{i}·{val[:9]}"
+                Pill(self.multi_bar, label,
+                     (lambda v=val: self._copy_text(v)),
+                     kind="flat", height=28, padx=12, font_size=9
+                     ).pack(side="left", padx=(0, 6))
         except Exception:  # noqa: BLE001
             pass
 
@@ -1055,7 +1213,8 @@ class App:
     def copy_answer(self):
         if not self.last_payload:
             return
-        self._copy_text(self.last_payload["result"].answer)
+        res = self.last_payload["result"]
+        self._copy_text(res.fill or res.answer)
 
     def clear(self):
         self.text.delete("1.0", "end")
@@ -1081,7 +1240,7 @@ class App:
         frm = tk.Frame(win, bg=bg)
         frm.pack(fill="both", expand=True, padx=18, pady=16)
         win.update_idletasks()
-        w, h = 560, 520
+        w, h = 560, 560
         px = self.root.winfo_rootx() + self.root.winfo_width() - w
         py = self.root.winfo_rooty() + self.root.winfo_height() - h
         win.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
@@ -1131,11 +1290,17 @@ class App:
         esc_var = tk.BooleanVar(value=bool(self.cfg.get("escalate", True)))
         sound_var = tk.BooleanVar(value=bool(self.cfg.get("sound", True)))
         dedupe_var = tk.BooleanVar(value=bool(self.cfg.get("dedupe", True)))
+        cache_var = tk.BooleanVar(value=bool(self.cfg.get("cache", True)))
+        multi_var = tk.BooleanVar(value=bool(self.cfg.get("multi", True)))
+        refocus_var = tk.BooleanVar(value=bool(self.cfg.get("refocus", True)))
         for i, (text, var) in enumerate((("窗口置顶", top_var),
                                          ("出答案自动复制", copy_var),
                                          ("分歧追加采样", esc_var),
                                          ("新题/出答案响铃", sound_var),
-                                         ("同题不重复作答", dedupe_var))):
+                                         ("同题不重复作答", dedupe_var),
+                                         ("同题缓存秒出", cache_var),
+                                         ("一屏多题分别作答", multi_var),
+                                         ("答完回到原窗口", refocus_var))):
             tk.Checkbutton(checks, text=text, variable=var, bg=bg, fg=UI["dim"],
                            selectcolor=card, activebackground=bg,
                            activeforeground=UI["text"], bd=0, highlightthickness=0,
@@ -1146,6 +1311,9 @@ class App:
         row6.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
         tk.Label(row6, text=self._region_text(), bg=bg, fg=UI["muted"],
                  font=(FONT, 9)).pack(side="left")
+        Pill(row6, "清空缓存", (lambda: msg.configure(
+            text=f"已清空 {clear_cache()} 条缓存")),
+             kind="flat", height=26, padx=12, font_size=9).pack(side="left", padx=(10, 0))
 
         def reset_region():
             self.cont_region = None
@@ -1181,6 +1349,9 @@ class App:
             self.cfg["escalate"] = bool(esc_var.get())
             self.cfg["sound"] = bool(sound_var.get())
             self.cfg["dedupe"] = bool(dedupe_var.get())
+            self.cfg["cache"] = bool(cache_var.get())
+            self.cfg["multi"] = bool(multi_var.get())
+            self.cfg["refocus"] = bool(refocus_var.get())
             self.cfg["ocr_quality"] = (
                 "high" if qual_var.get().startswith("高精度") else "standard")
             cfg_mod.save(self.cfg)

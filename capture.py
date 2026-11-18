@@ -165,3 +165,44 @@ class RegionSelector:
             top.destroy()
         except Exception:  # noqa: BLE001
             pass
+
+
+# ---------------------------------------------------------------- 焦点往返
+def foreground_window() -> int:
+    """当前前台窗口的顶层句柄（0 表示拿不到）。"""
+    try:
+        hwnd = int(ctypes.windll.user32.GetForegroundWindow())
+        if not hwnd:
+            return 0
+        root = int(ctypes.windll.user32.GetAncestor(hwnd, 2))  # GA_ROOT
+        return root or hwnd
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def restore_focus(hwnd: int) -> bool:
+    """把焦点还给之前的窗口。
+
+    Windows 默认不让后台进程抢前台，所以先用 AttachThreadInput 挂到
+    目标线程上再 SetForegroundWindow，完事再摘掉。
+    """
+    if not hwnd:
+        return False
+    u = ctypes.windll.user32
+    try:
+        if int(u.GetForegroundWindow()) == hwnd:
+            return True
+        target_tid = int(u.GetWindowThreadProcessId(hwnd, None))
+        cur_tid = int(ctypes.windll.kernel32.GetCurrentThreadId())
+        attached = False
+        if target_tid and target_tid != cur_tid:
+            attached = bool(u.AttachThreadInput(cur_tid, target_tid, True))
+        try:
+            u.SetForegroundWindow(hwnd)
+            u.BringWindowToTop(hwnd)
+        finally:
+            if attached:
+                u.AttachThreadInput(cur_tid, target_tid, False)
+        return int(u.GetForegroundWindow()) == hwnd
+    except Exception:  # noqa: BLE001
+        return False

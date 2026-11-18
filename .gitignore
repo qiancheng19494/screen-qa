@@ -13,3 +13,9 @@ _zh_test*.png
 _shot*.png
 _test_*.png
 *_test.png
+
+# 测试用图片
+_mathlab*.png
+_*.png
+cache.json
+_run.log

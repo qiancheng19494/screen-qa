@@ -30,6 +30,9 @@ DEFAULTS = {
     "ocr_quality": "high",      # high = 放大锐化 + 深色反色 + 低对比度二值化，多候选取最优；standard = 只跑原图（更快）
     "escalate": True,           # 采样答案有分歧时自动追加 2 次采样再投票
     "dedupe": True,             # 连续模式下「同一道题」不重复作答（省时间省调用）
+    "cache": True,              # 同一道题第二次出现直接秒出（不再调模型）
+    "multi": True,              # 一屏多题时自动切题、逐题作答
+    "refocus": True,            # 答完把焦点还给原来那个窗口（考试时直接 Ctrl+V）
     # 提示
     "sound": True,              # 发现新题 / 出答案 / 出错时响一声
 }

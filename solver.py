@@ -28,7 +28,15 @@ FEISHU_SYSTEM = """你是一个严谨的解题专家。用户会给你一段从�
 （你的解题过程，可多行）
 
 ## 最终答案
-（一行，只给答案本身：选择题给选项字母+内容，填空题给横线上应填的内容，问答题给结论要点）"""
+（一行，只给答案本身：选择题给选项字母+内容，填空题给横线上应填的内容，问答题给结论要点）
+
+## 填入答案
+（仅当题目是填空题 / 网页输入框（MyMathLab、Canvas 的 answer box 之类）时才写这一段：
+ 内容是**可以原样敲进输入框的字符串**——
+ 只写值或表达式本身，不要写"答案：""x="这类前缀（除非输入框明确要求写等式）；
+ 分数写 3/5 而不是 \\frac{3}{5}；带单位就带上单位；
+ 多个空按出现顺序用逗号分隔。
+ 选择题或不需要填框的题，这一段留空即可。）"""
 
 VERIFY_SYSTEM = """你是一位答案审核专家。下面会给出同一道题和若干个候选解答。
 你的任务：独立判断哪个答案正确，或给出你认为正确的答案。
@@ -43,7 +51,31 @@ VERIFY_SYSTEM = """你是一位答案审核专家。下面会给出同一道题�
 （简短指出各候选答案的问题或确认其正确）
 
 ## 最终答案
-（一行，只给答案本身）"""
+（一行，只给答案本身）
+
+## 填入答案
+（若题目是填空题/网页输入框，给出可原样输入的字符串；否则留空）"""
+
+_FILL_RE = re.compile(r"##\s*填入答案\s*\n+(.+?)(?:\n\s*##|$)", re.S)
+_FILL_INLINE_RE = re.compile(r"填入答案[：:]\s*(.+)")
+
+
+def extract_fill(text: str) -> str:
+    """抠出「填入答案」（MyMathLab/Canvas 输入框要原样敲的值）。没写就返回空串。"""
+    if not text:
+        return ""
+    m = _FILL_RE.search(text)
+    raw = m.group(1) if m else None
+    if raw is None:
+        m2 = _FILL_INLINE_RE.search(text)
+        raw = m2.group(1) if m2 else ""
+    raw = (raw or "").strip().strip("*` ")
+    raw = raw.split("\n")[0].strip()
+    if raw in ("", "无", "—", "-", "不适用", "N/A"):
+        return ""
+    # 去掉模型偶尔加的前缀
+    raw = re.sub(r"^填入(答案)?[：:]\s*", "", raw)
+    return raw[:200]
 
 _ANS_RE = re.compile(r"##\s*最终答案\s*\n+(.+?)(?:\n|$)", re.S)
 _ANS_INLINE_RE = re.compile(r"最终答案[：:]\s*(.+)")
@@ -77,6 +109,7 @@ def _norm_key(answer: str) -> str:
 class SolveResult:
     question_text: str
     answer: str = ""
+    fill: str = ""                 # 可原样敲进输入框的答案（MyMathLab / Canvas）
     reasoning: str = ""
     samples: list[str] = field(default_factory=list)      # 每次采样的最终答案
     sample_details: list[str] = field(default_factory=list)
@@ -206,6 +239,7 @@ class Solver:
                 break
         res.answer = best_answer
         res.reasoning = best_detail
+        res.fill = extract_fill(best_detail)
 
         # 3) 交叉审核（样本有分歧，或始终开启）
         if self.verify and self.samples >= 1:
@@ -233,10 +267,12 @@ class Solver:
                     if vkey != best_key:
                         res.answer = vans
                         res.reasoning = vout
+                        res.fill = extract_fill(vout) or res.fill
                         res.confidence = "中"
                         res.verified = True
                     else:
                         res.verified = True
+                        res.fill = res.fill or extract_fill(vout)
             except Exception:  # noqa: BLE001
                 pass
 
