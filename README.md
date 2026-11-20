@@ -169,3 +169,23 @@ Ctrl+Alt+Q 框选 → 截图
 ## License
 
 MIT
+
+## 两个"考试现场才发现"的细节（v2.1）
+
+**1. 答案格式要求会被自动满足。** Pearson 的题经常写「Round your answer to two decimal places」「Simplify your answer」「Enter as a percent」「Enter both answers, smaller first」——
+程序会把这句话抠出来（`questions.format_hint`），一边塞进提示词，一边在出答案后按它改写入框值：
+
+| 题目要求 | 模型给的 | 自动改成 |
+| --- | --- | --- |
+| Round to two decimal places（7x=22） | 3.142857 | `3.14` |
+| Simplify, write as a fraction（8/12） | 0.666… / 8/12 | `2/3` |
+| Write 0.25 as a percent | 0.25 | `25%` |
+| smaller first（两个解） | 3, 1 | `1, 3` |
+
+同时投票也按"洗过之后的答案"比对——同一道题写成 `3.14` 和 `3.142857` 不再算两票，
+所以置信度反而更准（实测那道题从 🔴存疑 60%/6 次调用 变成 🟢高 100%/4 次调用）。
+
+**2. 热键被占用会自动换键，并把真实生效的键显示出来。**
+本机 `Ctrl+Alt+W` 就被别的软件占着，程序会自动退到 `Ctrl+Alt+S`，状态栏直接写明
+`就绪 · 按 Ctrl+Alt+Q 圈题 · 整屏 Ctrl+Alt+S · 重算 Ctrl+Alt+R`——不让用户按一个没反应的键。
+新增 `Ctrl+Alt+R` = 重算上一次（答案看着不对，手不用离开网页）。

@@ -258,7 +258,7 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     if len(rr.text.strip()) < 12:
         return {"ok": False, "stage": "read", "elapsed": time.time() - t0,
                 "error": (f"只识别到 {len(rr.text.strip())} 个字，基本等于没框到题目。"
-                          f"\n把题目（含题干和选项）框大一点，或按 Ctrl+Alt+W 整屏。")}
+                          f"\n把题目（含题干和选项）框大一点，或按 {self._key_name('full', 'ctrl+alt+w')} 整屏。")}
     emit("log", f"识别完成（{rr.backend}，{len(rr.text)} 字，{rr.elapsed:.1f}s）")
 
     key = _cache_key(rr.text, cfg)
@@ -490,7 +490,7 @@ class App:
         if not self.cfg.get("api_key"):
             self.set_status("⚠ 还没填 API Key —— 点右上角 ⚙")
         else:
-            self.set_status("就绪 · 按 Ctrl+Alt+Q 圈题")
+            self._apply_hotkey_labels()
 
     # ------------------------------------------------------------ 窗口
     def _init_window(self):
@@ -1097,8 +1097,10 @@ class App:
                     name = self.hk.events.get_nowait()
                     if name == "region":
                         self.shot_region()
-                    else:
+                    elif name == "full":
                         self.shot_full()
+                    elif name == "redo":
+                        self.redo()
             except queue.Empty:
                 pass
             except Exception:  # noqa: BLE001
@@ -1111,12 +1113,44 @@ class App:
             import hotkey
 
             self.hk = hotkey.HotkeyManager()
-            self.hk.add("region", self.cfg.get("hotkey_region", "ctrl+alt+q"))
-            self.hk.add("full", self.cfg.get("hotkey_full", "ctrl+alt+w"))
+            self.hk.add("region", self.cfg.get("hotkey_region", "ctrl+alt+q"),
+                        ["ctrl+shift+q", "ctrl+alt+1"])
+            # ctrl+alt+w 常被别的软件（截图工具/显卡驱动）占了，所以带退路
+            self.hk.add("full", self.cfg.get("hotkey_full", "ctrl+alt+w"),
+                        ["ctrl+alt+s", "ctrl+shift+w", "ctrl+alt+2"])
+            # Ctrl+Alt+R：重算上一次（答案看着不对时不用回窗口点按钮）
+            self.hk.add("redo", self.cfg.get("hotkey_redo", "ctrl+alt+r"),
+                        ["ctrl+alt+e", "ctrl+shift+r"])
             if not self.hk.start():
                 self.log(f"⚠ 全局热键不可用：{self.hk.error}（按钮仍可用）")
+            elif getattr(self.hk, "failed", None):
+                self.log(f"⚠ 这些热键没注册上：{'、'.join(self.hk.failed)}")
+            self._apply_hotkey_labels()
         except Exception as exc:  # noqa: BLE001
             self.log(f"⚠ 热键初始化失败：{exc}")
+
+    def _key_name(self, name, default):
+        spec = (getattr(self.hk, "bound", None) or {}).get(name, default)
+        return "+".join(p.strip().capitalize() for p in spec.split("+"))
+
+    def _apply_hotkey_labels(self):
+        """把"实际生效的热键"显示出来（被占用时会自动换键，不能骗用户）。"""
+        try:
+            region = self._key_name("region", "ctrl+alt+q")
+            self.hk_region_name = region
+            if self.ans["fg"] == UI["dim"] or "圈住题目" in self.ans.cget("text"):
+                self.ans.configure(text=f"按 {region} 圈住题目")
+            tips = [f"就绪 · 按 {region} 圈题"]
+            full = self._key_name("full", "ctrl+alt+w")
+            want_full = (self.cfg.get("hotkey_full") or "ctrl+alt+w").lower()
+            if (getattr(self.hk, "bound", None) or {}).get("full", want_full) != want_full:
+                tips.append(f"整屏 {full}")
+                self.log(f"ℹ Ctrl + Alt + W 被别的软件占用，整屏已改用 {full}")
+            redo = self._key_name("redo", "ctrl+alt+r")
+            tips.append(f"重算 {redo}")
+            self.set_status(" · ".join(tips))
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------ 结果渲染
     def _finish(self, payload):

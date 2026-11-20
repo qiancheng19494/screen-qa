@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+import questions as qfmt
 from deepseek_api import DeepSeekClient
 
 FEISHU_SYSTEM = """你是一个严谨的解题专家。用户会给你一段从屏幕上识别出来的文字，里面可能是：
@@ -218,10 +219,26 @@ class Solver:
 
         t0 = time.time()
         res = SolveResult(question_text=question_text)
+        # 先把"这题要什么格式"抠出来，既塞进提示词，也对最终答案做后处理
+        hints = qfmt.format_hint(question_text)
+        hint_line = qfmt.hint_text(hints)
+        user_text = f"请解答下面的内容：\n\n{question_text}"
+        if hint_line:
+            user_text += f"\n\n（本题答案格式要求：{hint_line}。填入答案必须严格符合这个格式。）"
         messages = [
             {"role": "system", "content": FEISHU_SYSTEM},
-            {"role": "user", "content": f"请解答下面的内容：\n\n{question_text}"},
+            {"role": "user", "content": user_text},
         ]
+
+        def key_of(ans: str) -> str:
+            """投票用的归一化：先洗成"要敲进输入框的值"再比。
+            这样 x = 3.14 / 3.14 / 3.142857（同一题要求两位小数）会算同一票，
+            不会因为写法不同被误判成"有分歧"。
+            """
+            try:
+                return _norm_key(qfmt.apply_format(clean_fill(ans), hints))
+            except Exception:  # noqa: BLE001
+                return _norm_key(ans)
 
         # 1) 多次独立采样（失败的样本不计入投票，绝不伪装成答案）
         ok_samples, ok_details, fail_count = self._collect(messages, self.samples, res)
@@ -230,7 +247,7 @@ class Solver:
         if self.escalate and len(ok_samples) >= 2:
             quick: dict[str, int] = {}
             for a in ok_samples:
-                k = _norm_key(a)
+                k = key_of(a)
                 quick[k] = quick.get(k, 0) + 1
             if max(quick.values()) < len(ok_samples):
                 self.progress(f"答案有分歧，追加 {self.escalate_extra} 次采样再投票…")
@@ -256,7 +273,7 @@ class Solver:
         # 2) 统计投票
         votes: dict[str, int] = {}
         for a in res.samples:
-            k = _norm_key(a)
+            k = key_of(a)
             votes[k] = votes.get(k, 0) + 1
         res.votes = votes
         best_key = max(votes, key=lambda k: votes[k]) if votes else ""
@@ -265,13 +282,13 @@ class Solver:
         # 找到与最佳 key 对应的原始答案文本（保留格式）
         best_answer = ""
         for a in res.samples:
-            if _norm_key(a) == best_key:
+            if key_of(a) == best_key:
                 best_answer = a
                 break
 
         best_detail = ""
         for a, d in zip(res.samples, res.sample_details):
-            if _norm_key(a) == best_key:
+            if key_of(a) == best_key:
                 best_detail = d
                 break
         res.answer = best_answer
@@ -299,7 +316,7 @@ class Solver:
                 res.calls += 1
                 vans = extract_answer(vout)
                 if vans and "失败" not in vans:
-                    vkey = _norm_key(vans)
+                    vkey = key_of(vans)
                     # 审核结果与多数答案不一致时，以审核为准（并降低置信度）
                     if vkey != best_key:
                         res.answer = vans
@@ -327,6 +344,13 @@ class Solver:
         # 有样本失败时，不再声称"高"置信度
         if res.error and res.confidence == "高":
             res.confidence = "中"
+
+        # 5) 按题目要求格式化"填入答案"（几位小数/最简分数/百分数/排序）
+        if res.fill and hints:
+            try:
+                res.fill = qfmt.apply_format(res.fill, hints)
+            except Exception:  # noqa: BLE001
+                pass
 
         res.elapsed = time.time() - t0
         return res

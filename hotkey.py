@@ -54,42 +54,58 @@ def parse_hotkey(spec: str) -> tuple[int, int]:
 
 
 class HotkeyManager:
-    """注册若干个全局热键；触发的事件进入 self.events（queue.Queue）。"""
+    """注册若干个全局热键；触发的事件进入 self.events（queue.Queue）。
+
+    支持"退路"：首选键被别的软件占用时自动换下一个，并把实际生效的组合
+    记在 self.bound 里（界面上要显示真实生效的键，不能骗用户）。
+    """
 
     def __init__(self):
         self.events: queue.Queue[str] = queue.Queue()
         self._thread: threading.Thread | None = None
-        self._bindings: dict[str, tuple[int, int]] = {}
+        self._pending: dict[str, list[str]] = {}
         self._registered: dict[int, str] = {}
+        self.failed: list[str] = []
+        self.bound: dict[str, str] = {}
+        self.ok_count = 0
         self._next_id = 1
         self._ready = threading.Event()
         self.error = ""
 
-    def add(self, name: str, spec: str) -> None:
-        mods, vk = parse_hotkey(spec)
-        self._bindings[name] = (mods, vk)
+    def add(self, name: str, spec: str, fallbacks=()) -> bool:
+        specs = [spec] + [s for s in fallbacks if s and s != spec]
+        self._pending[name] = specs
+        return True
 
     def start(self) -> bool:
-        if not self._bindings:
+        if not self._pending:
             return False
         self._thread = threading.Thread(target=self._run, daemon=True, name="hotkeys")
         self._thread.start()
         self._ready.wait(3.0)
-        return not self.error
+        # 只要有一个注册成功就算可用；失败的写在 self.failed 里由调用方提示
+        return self.ok_count > 0
 
     def _run(self) -> None:
         user32 = ctypes.windll.user32
-        ok_any = False
-        for name, (mods, vk) in self._bindings.items():
-            hid = self._next_id
-            self._next_id += 1
-            if user32.RegisterHotKey(None, hid, mods, vk):
-                self._registered[hid] = name
-                ok_any = True
+        for name, specs in self._pending.items():
+            for spec in specs:
+                try:
+                    mods, vk = parse_hotkey(spec)
+                except Exception:  # noqa: BLE001
+                    continue
+                hid = self._next_id
+                self._next_id += 1
+                if user32.RegisterHotKey(None, hid, mods, vk):
+                    self._registered[hid] = name
+                    self.bound[name] = spec
+                    self.ok_count += 1
+                    break
             else:
-                self.error = f"热键被占用或注册失败: {name}"
+                self.failed.append(name)
+                self.error = self.error or f"热键全被占用: {name}（{specs[0]}）"
         self._ready.set()
-        if not ok_any:
+        if self.ok_count == 0:
             return
 
         msg = wintypes.MSG()
