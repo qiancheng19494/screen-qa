@@ -1145,7 +1145,9 @@ class App:
             want_full = (self.cfg.get("hotkey_full") or "ctrl+alt+w").lower()
             if (getattr(self.hk, "bound", None) or {}).get("full", want_full) != want_full:
                 tips.append(f"整屏 {full}")
-                self.log(f"ℹ Ctrl + Alt + W 被别的软件占用，整屏已改用 {full}")
+                if not getattr(self, "_hk_noted", False):
+                    self._hk_noted = True
+                    self.log(f"ℹ {want_full.replace('+', '+').upper()} 被别的软件占用，整屏已改用 {full}")
             redo = self._key_name("redo", "ctrl+alt+r")
             tips.append(f"重算 {redo}")
             self.set_status(" · ".join(tips))
