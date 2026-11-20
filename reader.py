@@ -127,10 +127,14 @@ def read_with_ocr(image_path: str, timeout_s: int = 120,
     t0 = time.time()
     res = ReadResult(backend="winocr")
     try:
+        import ocrfix
         import psocr
 
-        res.text = psocr.recognize(
+        raw = psocr.recognize(
             image_path, timeout_s=timeout_s, quality=quality).strip()
+        res.text, fixes = ocrfix.repair(raw)
+        if fixes:
+            res.warnings.append(f"修了 {fixes} 处 OCR 形近字/数学符号误识别")
         if not res.text:
             res.error = "OCR 没识别到文字（图片里可能没有文本）"
     except Exception as exc:  # noqa: BLE001

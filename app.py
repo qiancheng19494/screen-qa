@@ -639,6 +639,10 @@ class App:
         self.multi_bar = tk.Frame(wrap, bg=bg)
         self.multi_bar.pack(fill="x", before=bar)
 
+        # 最近几条答案：考试时往回翻、重新粘，不用回到原题
+        self.hist_bar = tk.Frame(wrap, bg=bg)
+        self.hist_bar.pack(fill="x", before=bar)
+
         bar2 = tk.Frame(wrap, bg=bg)
         bar2.pack(fill="x", pady=(8, 0), before=det)
         self.b_cont = Pill(bar2, "▶  连续截图", self.toggle_continuous,
@@ -1247,6 +1251,15 @@ class App:
             self._render_blanks(blanks)
         else:
             self._render_multi(items)
+        try:
+            if len(items) > 1:
+                for i, r in enumerate(items, 1):
+                    self._remember(f"{i}题", r.fill or r.answer)
+            else:
+                qn = qsplit.question_number(payload.get("text") or "")
+                self._remember(f"第{qn[0]}题" if qn and qn[0] else "上题", to_copy)
+        except Exception:  # noqa: BLE001
+            pass
         if (copied and self.cfg.get("refocus", True) and not self.cont_on
                 and self.prev_hwnd):
             self.root.after(90, lambda: capture.restore_focus(self.prev_hwnd))
@@ -1286,6 +1299,35 @@ class App:
                      (lambda v=val: self._copy_text(v)),
                      kind="flat", height=28, padx=12, font_size=9
                      ).pack(side="left", padx=(0, 6))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _remember(self, label: str, value: str):
+        """记一条最近的答案（内存里留 6 条，够考试里来回翻）。"""
+        if not value:
+            return
+        try:
+            self.history = [h for h in getattr(self, "history", [])
+                            if h.get("value") != value][:5]
+            self.history.insert(0, {"label": label, "value": value})
+            self._render_history()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _render_history(self):
+        try:
+            for w in self.hist_bar.winfo_children():
+                w.destroy()
+            hist = getattr(self, "history", [])
+            if not hist:
+                return
+            tk.Label(self.hist_bar, text="最近", bg=self.hist_bar.cget("bg"), fg=UI["muted"],
+                     font=(FONT, 8)).pack(side="left", padx=(2, 6))
+            for h in hist[:6]:
+                Pill(self.hist_bar, f"{h['label']}·{h['value'][:7]}",
+                     (lambda v=h["value"]: self._copy_text(v)),
+                     kind="flat", height=26, padx=10, font_size=8
+                     ).pack(side="left", padx=(0, 5))
         except Exception:  # noqa: BLE001
             pass
 
