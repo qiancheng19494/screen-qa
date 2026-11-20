@@ -1390,6 +1390,36 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    def _vision_selftest(self) -> str:
+        """跑一次真实的视觉识别，把成功/失败原因原样报给用户。"""
+        try:
+            import reader
+            from PIL import Image, ImageDraw, ImageFont
+            tmp = Path(tempfile.gettempdir()) / "screenqa_vision_selftest.png"
+            img = Image.new("RGB", (720, 220), "#ffffff")
+            d = ImageDraw.Draw(img)
+            f1 = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 30)
+            d.text((24, 22), "Solve for x:", font=f1, fill="#111111")
+            d.text((24, 80), "3x + 7 = 25", font=f1, fill="#111111")
+            d.text((24, 150), "测试用图 VISION-SELFTEST", font=f1, fill="#333333")
+            img.save(tmp)
+
+            timeout_s = int(self.cfg.get("modlens_timeout", 120))
+            res = reader.read_with_modlens(str(tmp), timeout_s=timeout_s)
+            if res.error:
+                hint = ""
+                if "EPERM" in res.error or "EINVAL" in res.error:
+                    hint = ("\n\n可能原因：CLI 启动被系统拒绝。本程序已把 "
+                            "tools/cli_shims（真 .exe 垫片）放进 PATH；若仍失败，"
+                            "请确认 codex / claude CLI 已登录。")
+                return f"❌ 视觉模型不可用\n{res.error}{hint}"
+            text = (res.text or "").strip()
+            if not text:
+                return "❌ 视觉模型返回了空文本（模型能启动，但没读出内容）"
+            return f"✅ 视觉可用（{res.elapsed:.1f}s，{len(text)} 字）\n{text[:400]}"
+        except Exception as exc:
+            return f"❌ 视觉自检异常：{type(exc).__name__}: {exc}"
+
     def redo(self):
         """重算这一次（跳过缓存，多问几路，置信度低的时候用）。"""
         if self.busy or not self.last_image:
@@ -1592,6 +1622,28 @@ class App:
         pill_reset = Pill(row6, "重置区域", reset_region, kind="flat", height=26,
                           padx=12, font_size=9, bg=bg)
         pill_reset.pack(side="left", padx=(10, 0))
+
+        def vision_selftest():
+            msg.configure(text="视觉自检中（可能要 1-3 分钟，失败会立刻报错）…")
+
+            def worker():
+                verdict = self._vision_selftest()
+                def show():
+                    msg.configure(text=verdict[:110])
+                    self.detail.configure(state="normal")
+                    self.detail.delete("1.0", "end")
+                    self.detail.insert("end", verdict)
+                    self.detail.configure(state="disabled")
+                    if verdict.startswith("✅"):
+                        messagebox.showinfo("视觉自检", verdict)
+                    else:
+                        messagebox.showwarning("视觉自检", verdict)
+                self.root.after(0, show)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        Pill(row6, "视觉自检", vision_selftest, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
 
         msg = tk.Label(frm, text="Key 获取：platform.deepseek.com → API keys",
                        bg=bg, fg=UI["muted"], font=(FONT, 9))

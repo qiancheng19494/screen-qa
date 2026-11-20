@@ -28,6 +28,32 @@ MODLENS_LOCAL = Path(
     os.path.expanduser("~")
 ) / ".dsh/profiles/desktop/node_modules/@liustack/modlens/dist/main.js"
 
+# modlens 需要 spawn 本机的 codex / claude CLI；而它们在 Windows 上是 npm 的
+# .cmd 批处理垫片，Node 直接 spawn .cmd 会被系统拒绝（EINVAL/EPERM）。
+# tools/cli_shims 里是两个真 .exe 垫片（内容只是转发到对应 CLI），
+# 把该目录放到 PATH 最前面，modlens 就会先命中 .EXE，从而能正常启动。
+SHIM_DIR = ROOT / "tools" / "cli_shims"
+
+
+def ensure_shims() -> bool:
+    """把 cli_shims 前置进 PATH（幂等）。返回是否真的添加了。"""
+    try:
+        if not SHIM_DIR.is_dir():
+            return False
+        if not any((SHIM_DIR / n).is_file() for n in ("codex.exe", "claude.exe")):
+            return False
+        cur = os.environ.get("PATH", "")
+        head = str(SHIM_DIR)
+        if cur.split(os.pathsep)[0] == head:
+            return False
+        os.environ["PATH"] = head + os.pathsep + cur
+        return True
+    except Exception:
+        return False
+
+
+ensure_shims()
+
 
 @dataclass
 class ReadResult:

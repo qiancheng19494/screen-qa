@@ -44,6 +44,30 @@
 于是改判、采用新答案、并在详情里留痕：`R1 复核改判：x = 3 → x = 5`。
 这条链路是真实 API 跑出来的，不是模拟。
 
+## 视觉模型为什么可能用不了（以及怎么修）
+
+详情框里出现
+
+```
+⚠ modlens 不可用（Error: Every configured vision provider failed for this image.
+   codex-cli: spawn EPERM | claude-cli: spawn EPERM）
+```
+
+不是网络问题，而是**子进程没起来**。两个真实原因：
+
+1. **npm 的 `codex` / `claude` 是 `.cmd` 批处理垫片**，Node 直接 `spawn` 一个 `.cmd` 在 Windows 上会被系统拒绝（`EINVAL`／`EPERM`）。
+   修法：仓库里带了 `tools/cli_shims/codex.exe`、`claude.exe`（用 `csc.exe` 编译的极薄转发器），
+   `启动.bat` 会把该目录**前置到 PATH**；程序运行时 `reader.ensure_shims()` 也会再兜一次。
+   这样 modlens 先命中 `.EXE`，就能正常拉起 CLI。
+2. **程序被限制型宿主拉起时**（例如被别的工具放进 Windows 作业对象／沙箱），
+   子进程会被整体禁止 → 任何 CLI 都是 `EPERM`。这时只有你自己双击 `启动.bat`（脱离那个进程树）才正常。
+
+**10 秒判断法**：⚙ → 点「视觉自检」。
+✅ 说明视觉链路通了（会显示识别到的文字）；❌ 会给出真实错误和下一步建议。
+
+兜底不变：视觉起不来时自动降级**本地 OCR**，文字类题目照样能做；
+真正必须靠视觉的是**纯图形题**（几何图、函数图像、带图表的题）。
+
 ## 考试前 3 分钟自检
 
 1. 右上角 ⚙ 里确认 Key 已填、模型 `deepseek-chat`；
