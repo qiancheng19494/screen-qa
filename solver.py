@@ -147,6 +147,7 @@ class SolveResult:
     verified: bool = False
     elapsed: float = 0.0
     calls: int = 0
+    r1: bool = False               # 是否经过 deepseek-reasoner 复核
     error: str = ""
     warnings: list[str] = field(default_factory=list)
 
@@ -161,6 +162,7 @@ class Solver:
         progress=None,
         escalate: bool = True,
         escalate_extra: int = 2,
+        reasoner: str = "",
     ):
         self.client = client
         self.samples = max(1, int(samples))
@@ -170,6 +172,8 @@ class Solver:
         # 分歧时追加采样：平时 3 次便宜，遇到答案不一致再多问几次把错误压下去
         self.escalate = escalate
         self.escalate_extra = max(1, int(escalate_extra))
+        # 低置信度时用更强推理模型复核一次（空字符串 = 不复核）
+        self.reasoner = (reasoner or "").strip()
 
     # ------------------------------------------------------------------
     def _collect(self, messages, n: int, res: SolveResult, start: int = 0):
@@ -344,6 +348,44 @@ class Solver:
         # 有样本失败时，不再声称"高"置信度
         if res.error and res.confidence == "高":
             res.confidence = "中"
+
+        # 4b) 低置信度 → 换 deepseek-reasoner 复核一次
+        #     为什么只在"中/存疑"时用：R1 一次要 10-40 秒，🟢高的题没必要多花钱
+        if (self.reasoner and res.confidence in ("中", "存疑")
+                and res.answer and "调用失败" not in res.answer):
+            self.progress("R1 深度复核中（较慢，约 10-40 秒）…")
+            try:
+                rmsg = [
+                    {"role": "system", "content": FEISHU_SYSTEM},
+                    {"role": "user", "content": (
+                        f"【题目】\n{question_text}\n\n"
+                        f"【此前多数投票得到的答案】\n{res.answer}\n\n"
+                        "请独立重新求解，不要被上面的答案带偏；"
+                        "如果你认为它错了，直接给出正确答案并说明理由。"
+                    )},
+                ]
+                rout = self.client.chat(rmsg, temperature=0.0,
+                                        max_tokens=3072, model=self.reasoner)
+                res.calls += 1
+                res.r1 = True
+                rans = extract_answer(rout)
+                rfill = extract_fill(rout)
+                if rans and "失败" not in rans:
+                    rkey = key_of(rans)
+                    if rkey != best_key:
+                        res.warnings.append(f"R1 复核改判：{res.answer} → {rans}")
+                        res.answer = rans
+                        res.reasoning = rout
+                        res.fill = rfill or clean_fill(rans)
+                        res.confidence = "中"
+                        res.verified = True
+                    else:
+                        # 两条独立链路给出一致结论：存疑可以升到中，但不能凭空变高
+                        if res.confidence == "存疑":
+                            res.confidence = "中"
+                        res.fill = res.fill or rfill
+            except Exception as exc:  # noqa: BLE001
+                res.warnings.append(f"R1 复核失败：{exc}")
 
         # 5) 按题目要求格式化"填入答案"（几位小数/最简分数/百分数/排序）
         if res.fill and hints:

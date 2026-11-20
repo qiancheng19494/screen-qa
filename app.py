@@ -38,11 +38,18 @@ from solver import SolveResult, Solver  # noqa: E402
 
 APP_TITLE = "屏幕问答 · DeepSeek"
 
+BACKEND_LABEL = {"winocr": "本地OCR", "modlens": "视觉模型"}
+
 READER_LABELS = {
     "自动（视觉优先）": ["modlens", "winocr"],
     "仅视觉模型": ["modlens"],
     "仅本地 OCR": ["winocr"],
 }
+MODEL_CHOICES = (("chat 快", "deepseek-chat"),
+                 ("R1 强", "deepseek-reasoner"))
+MODEL_LABEL2ID = {lbl: mid for lbl, mid in MODEL_CHOICES}
+MODEL_ID2LABEL = {mid: lbl for lbl, mid in MODEL_CHOICES}
+
 MODELS = ["deepseek-chat", "deepseek-reasoner"]
 SAMPLE_CHOICES = ["1", "2", "3", "5"]
 
@@ -56,6 +63,7 @@ UI = {
     "muted": "#6a7486",
     "accent": "#4d9dff",
     "green": "#3ddc84",
+    "accent_bg": "#16233a",
     "green_bg": "#0d2a1c",
     "amber": "#ffc857",
     "amber_bg": "#2b2310",
@@ -91,15 +99,37 @@ def place_bottom_right(root: tk.Tk, w: int, h: int, margin: int = 28) -> None:
     root.geometry(f"{w}x{h}+{max(0, int(x))}+{max(0, int(y))}")
 
 
+def apply_icon(win) -> None:
+    """窗口/任务栏图标。优先用 assets/app.ico（含 16~256 多尺寸）。"""
+    try:
+        ico = ROOT / "assets" / "app.ico"
+        if ico.exists():
+            win.iconbitmap(default=str(ico))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        png = ROOT / "assets" / "icon-64.png"
+        if png.exists():
+            img = tk.PhotoImage(file=str(png))
+            win.iconphoto(False, img)
+            win._icon_ref = img          # 防止被 GC
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def dark_titlebar(root: tk.Tk) -> None:
     """Windows 10/11 深色标题栏。"""
     try:
         root.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
         one = ctypes.c_int(1)
-        for attr in (20, 19):
+        for attr in (20, 19):          # 20=深色标题栏 19=深色边框
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, attr, ctypes.byref(one), ctypes.sizeof(one))
+        # 33 = DWMWA_WINDOW_CORNER_PREFERENCE，2 = 圆角（Win11 生效，Win10 忽略）
+        round_ = ctypes.c_int(2)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, 33, ctypes.byref(round_), ctypes.sizeof(round_))
     except Exception:  # noqa: BLE001
         pass
 
@@ -282,6 +312,9 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
         base_url=cfg.get("base_url", "https://api.deepseek.com"),
         model=cfg.get("model", "deepseek-chat"),
     )
+    # 低置信度时换 deepseek-reasoner 复核：极速模式或已经用 R1 当主模型时跳过
+    use_r1 = (bool(cfg.get("reasoner", True)) and not cfg.get("fast")
+              and cfg.get("model") != "deepseek-reasoner")
     solver = Solver(
         client,
         samples=int(cfg.get("samples", 3)),
@@ -289,6 +322,7 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
         temperature=float(cfg.get("temperature", 0.7)),
         progress=lambda m: emit("log", m),
         escalate=bool(cfg.get("escalate", True)),
+        reasoner="deepseek-reasoner" if use_r1 else "",
     )
 
     # ---- 一屏多题：切成一题一题，分别走同一套采样+投票+审核
@@ -331,6 +365,16 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     return payload
 
 
+_MARK_RE = re.compile(r"^\s*##\s*(推理|最终答案|填入答案|复核|参考答案)\s*$", re.M)
+
+
+def pretty_reasoning(text: str) -> str:
+    """把模型返回的「## 推理 / ## 最终答案」这类小标题去掉，只留正文。"""
+    body = _MARK_RE.sub("", (text or "")).strip()
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body or "（无）"
+
+
 def format_answer(payload: dict) -> str:
     res = payload["result"]
     items = payload.get("items") or [res]
@@ -354,7 +398,7 @@ def format_answer(payload: dict) -> str:
         lines.append(f"{icon} 置信度：{res.confidence}（样本一致度 "
                      f"{res.agreement:.0%}，{res.calls} 次模型调用，"
                      f"{res.elapsed:.1f}s）")
-    lines += ["", "—— 详细推理 ——", (res.reasoning or "（无）").strip()]
+    lines += ["", "—— 详细推理 ——", pretty_reasoning(res.reasoning)]
     if len(res.samples) > 1:
         lines += ["", "—— 各次采样 ——"]
         lines += [f"{i}. {x}" for i, x in enumerate(res.samples, 1)]
@@ -463,6 +507,9 @@ class App:
         self.cfg = cfg_mod.load()
         self.q: queue.Queue = queue.Queue()
         self.busy = False
+        self._anim = 0
+        self._anim_job = None
+        self._status_base = "就绪"
         self.hk = None
         self.last_payload = None
         self.prev_hwnd = 0
@@ -482,6 +529,7 @@ class App:
         self.root.after(100, self._poll)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(60, lambda: dark_titlebar(self.root))
+        apply_icon(self.root)
         self.root.after(160, lambda: snap_bottom_right(self.root))
         self.root.after(700, lambda: snap_bottom_right(self.root))
         # 被最小化 / Win+D 之后再恢复时，重新贴回右下角
@@ -497,7 +545,7 @@ class App:
         root = self.root
         root.title(APP_TITLE)
         root.configure(bg=UI["bg"])
-        place_bottom_right(root, 474, 668)
+        place_bottom_right(root, 474, 700)
         root.minsize(430, 540)
         self.topmost = bool(self.cfg.get("always_on_top", True))
         root.attributes("-topmost", self.topmost)
@@ -549,11 +597,14 @@ class App:
         card = tk.Frame(wrap, bg=UI["card"], highlightbackground=UI["border"],
                         highlightthickness=1)
         card.pack(fill="x", pady=(11, 9))
+        # 左侧 3px 色条：随置信度变色，一眼看出这题靠不靠谱
+        self.edge = tk.Frame(card, bg=UI["accent"], width=3)
+        self.edge.pack(side="left", fill="y")
         inner = tk.Frame(card, bg=UI["card"])
-        inner.pack(fill="both", expand=True, padx=15, pady=13)
+        inner.pack(side="left", fill="both", expand=True, padx=(13, 15), pady=14)
         self.ans = tk.Label(inner, text="按 Ctrl+Alt+Q 圈住题目", bg=UI["card"],
-                            fg=UI["dim"], font=(FONT, 15, "bold"), justify="left",
-                            anchor="w", wraplength=390)
+                            fg=UI["dim"], font=(FONT, 16, "bold"), justify="left",
+                            anchor="w", wraplength=380)
         self.ans.pack(fill="x")
         chips = tk.Frame(inner, bg=UI["card"])
         chips.pack(fill="x", pady=(9, 0))
@@ -561,8 +612,9 @@ class App:
                              font=(FONT, 9), padx=9, pady=2)
         self.chip.pack(side="left")
         self.meta = tk.Label(chips, text="", bg=UI["card"], fg=UI["muted"],
-                             font=(FONT, 9), anchor="w")
-        self.meta.pack(side="left", padx=(9, 0), fill="x")
+                             font=(FONT, 9), anchor="w", justify="left",
+                             wraplength=268)
+        self.meta.pack(side="left", padx=(9, 0))
         self.card = card
         card.bind("<Configure>", self._on_card_resize)
 
@@ -577,22 +629,30 @@ class App:
         self.reader_box.pack(side="left", padx=(6, 10))
 
         tk.Label(opts, text="模型", bg=bg, fg=UI["muted"], font=(FONT, 9)).pack(side="left")
-        self.model_var = tk.StringVar(value=self.cfg.get("model", "deepseek-chat"))
-        self.model_box = tk.OptionMenu(opts, self.model_var, *MODELS)
-        self._style_optionmenu(self.model_box, width=15)
+        self.model_var = tk.StringVar(
+            value=MODEL_ID2LABEL.get(self.cfg.get("model", "deepseek-chat"),
+                                     MODEL_CHOICES[0][0]))
+        self.model_box = tk.OptionMenu(opts, self.model_var,
+                                       *[lbl for lbl, _ in MODEL_CHOICES])
+        self._style_optionmenu(self.model_box, width=14)
         self.model_box.pack(side="left", padx=(6, 10))
 
-        tk.Label(opts, text="采样", bg=bg, fg=UI["muted"], font=(FONT, 9)).pack(side="left")
+        opts2 = tk.Frame(wrap, bg=bg)
+        opts2.pack(fill="x", pady=(0, 8))
+        tk.Label(opts2, text="采样", bg=bg, fg=UI["muted"],
+                 font=(FONT, 9)).pack(side="left")
         self.samples_var = tk.StringVar(value=str(self.cfg.get("samples", 3)))
-        self.samples_box = tk.OptionMenu(opts, self.samples_var, *SAMPLE_CHOICES)
+        self.samples_box = tk.OptionMenu(opts2, self.samples_var, *SAMPLE_CHOICES)
         self._style_optionmenu(self.samples_box, width=3)
-        self.samples_box.pack(side="left", padx=(6, 0))
-
+        self.samples_box.pack(side="left", padx=(6, 14))
         self.verify_var = tk.BooleanVar(value=bool(self.cfg.get("verify", True)))
-        tk.Checkbutton(opts, text="审核", variable=self.verify_var, bg=bg,
+        tk.Checkbutton(opts2, text="交叉审核", variable=self.verify_var, bg=bg,
                        fg=UI["dim"], selectcolor=UI["card2"], activebackground=bg,
                        activeforeground=UI["text"], bd=0, highlightthickness=0,
-                       font=(FONT, 9)).pack(side="right")
+                       font=(FONT, 9)).pack(side="left")
+        self.chk_hint = tk.Label(opts2, text="多问几遍取多数", bg=bg,
+                                 fg=UI["muted"], font=(FONT, 8))
+        self.chk_hint.pack(side="left", padx=(8, 0))
 
         # ---- 详情
         det = tk.Frame(wrap, bg=UI["card2"], highlightbackground=UI["border"],
@@ -713,7 +773,45 @@ class App:
             pass
 
     def set_status(self, msg: str):
-        self.status.configure(text=msg)
+        self._status_base = msg
+        self.status.configure(text=msg + (self._dots() if self.busy else ""))
+
+    def _dots(self) -> str:
+        return ("· ", "·· ", "··· ")[self._anim % 3]
+
+    def _start_anim(self):
+        if self._anim_job:
+            return
+        def tick():
+            self._anim += 1
+            if self.busy:
+                self.status.configure(
+                    text=(self._status_base or "作答中") + " " + self._dots().strip())
+                self.dot.configure(fg=UI["accent"] if self._anim % 2 else UI["accent_bg"])
+                self._anim_job = self.root.after(380, tick)
+            else:
+                self._anim_job = None
+        self._anim_job = self.root.after(380, tick)
+
+    def _stop_anim(self):
+        if self._anim_job:
+            try:
+                self.root.after_cancel(self._anim_job)
+            except Exception:  # noqa: BLE001
+                pass
+            self._anim_job = None
+        self.dot.configure(fg=UI["accent"])
+        self.set_status(self._status_base or "就绪")
+
+    def _copy_flash(self, label: str = ""):
+        """复制成功时给按钮一个明确回执（考试时很需要这种确认）。"""
+        try:
+            self.b_copy.set_text("已复制 ✓" if not label else label)
+            self.b_copy.set_kind("success")
+            self.root.after(1100, lambda: (self.b_copy.set_text("复制答案"),
+                                           self.b_copy.set_kind("ghost")))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _flash(self, color: str):
         try:
@@ -856,7 +954,7 @@ class App:
         cfg = dict(self.cfg)
         cfg["reader_order"] = READER_LABELS.get(self.reader_var.get(),
                                                 ["modlens", "winocr"])
-        cfg["model"] = self.model_var.get()
+        cfg["model"] = MODEL_LABEL2ID.get(self.model_var.get(), "deepseek-chat")
         cfg["samples"] = int(self.samples_var.get())
         cfg["verify"] = bool(self.verify_var.get())
         if cfg.get("fast"):
@@ -1090,6 +1188,10 @@ class App:
                 elif kind == "busy":
                     self.busy = bool(payload)
                     self._set_buttons(not self.busy)
+                    if self.busy:
+                        self._start_anim()
+                    else:
+                        self._stop_anim()
                 elif kind == "finish":
                     self._finish(payload)
         except queue.Empty:
@@ -1161,6 +1263,9 @@ class App:
     # ------------------------------------------------------------ 结果渲染
     def _finish(self, payload):
         self.busy = False
+        self._anim = 0
+        self._anim_job = None
+        self._status_base = "就绪"
         # 窗口被最小化时也要让答案现身（连续模式下人在看别处）
         try:
             if self.root.state() == "iconic":
@@ -1175,6 +1280,7 @@ class App:
         if not payload.get("ok"):
             self.ans.configure(text="这一次没成功", fg=UI["red"])
             self.chip.configure(text="⚠ 出错", bg=UI["red_bg"], fg=UI["red"])
+            self.edge.configure(bg=UI["red"])
             self.meta.configure(text=str(payload.get("stage", "")))
             self._flash(UI["red"])
             self.text.delete("1.0", "end")
@@ -1188,6 +1294,7 @@ class App:
         if res.answer.startswith("（调用失败）"):
             self.ans.configure(text="DeepSeek 调用失败", fg=UI["red"])
             self.chip.configure(text="🔴 未作答", bg=UI["red_bg"], fg=UI["red"])
+            self.edge.configure(bg=UI["red"])
             self.meta.configure(text=str(res.error)[:60])
             self._flash(UI["red"])
             self.text.delete("1.0", "end")
@@ -1207,12 +1314,16 @@ class App:
         self.ans.configure(text=head, fg=UI["text"])
         self.chip.configure(text=label, fg=UI.get(key, UI["muted"]),
                             bg=UI.get(key + "_bg", UI["card2"]))
-        bits = [f"一致度 {res.agreement:.0%}",
-                f"{sum(i.calls for i in items)} 次调用",
+        self.edge.configure(bg=UI.get(key, UI["accent"]))
+        bits = [f"一致 {res.agreement:.0%}",
+                f"{sum(i.calls for i in items)} 次",
                 f"{payload['elapsed']:.1f}s",
-                str(payload.get("backend", ""))]
+                BACKEND_LABEL.get(str(payload.get("backend", "")),
+                                  str(payload.get("backend", "")))]
         if len(items) > 1:
             bits.insert(0, f"共 {len(items)} 题")
+        if getattr(res, "r1", False):
+            bits.insert(0, "R1 复核")
         if payload.get("cached"):
             bits.insert(0, "⚡ 缓存")
         self.meta.configure(text=" · ".join(bits))
@@ -1231,7 +1342,7 @@ class App:
             if res.fill:
                 self.text.insert("end", f"填入答案：{res.fill}\n", "answer")
             self.text.insert("end", "推理\n", "h")
-        self.text.insert("end", (res.reasoning or "（无）").strip() + "\n")
+        self.text.insert("end", pretty_reasoning(res.reasoning) + "\n")
         if len(res.samples) > 1:
             self.text.insert("end", "各次采样\n", "h")
             for i, s in enumerate(res.samples, 1):
@@ -1273,7 +1384,8 @@ class App:
         try:
             cfg_mod.save_history(
                 payload["text"], format_answer(payload),
-                f"reader={payload.get('backend', '')} model={self.model_var.get()}"
+                f"reader={payload.get('backend', '')} "
+                f"model={MODEL_LABEL2ID.get(self.model_var.get(), 'deepseek-chat')}"
                 f" conf={res.confidence}")
         except Exception:  # noqa: BLE001
             pass
@@ -1360,12 +1472,15 @@ class App:
         if not self.last_payload:
             return
         res = self.last_payload["result"]
-        self._copy_text(res.fill or res.answer)
+        ok = self._copy_text(res.fill or res.answer)
+        if ok:
+            self._copy_flash()
 
     def clear(self):
         self.text.delete("1.0", "end")
         self.ans.configure(text="按 Ctrl+Alt+Q 圈住题目", fg=UI["dim"])
         self.chip.configure(text="待命", bg=UI["card2"], fg=UI["muted"])
+        self.edge.configure(bg=UI["accent"])
         self.meta.configure(text="")
         self.b_copy.set_enabled(False)
         self.set_status("就绪")
@@ -1377,6 +1492,7 @@ class App:
         win = tk.Toplevel(self.root)
         win.title("设置")
         win.configure(bg=bg)
+        apply_icon(win)
         win.transient(self.root)
         win.resizable(False, False)
         try:
@@ -1440,6 +1556,7 @@ class App:
         multi_var = tk.BooleanVar(value=bool(self.cfg.get("multi", True)))
         refocus_var = tk.BooleanVar(value=bool(self.cfg.get("refocus", True)))
         fast_var = tk.BooleanVar(value=bool(self.cfg.get("fast", False)))
+        r1_var = tk.BooleanVar(value=bool(self.cfg.get("reasoner", True)))
         for i, (text, var) in enumerate((("窗口置顶", top_var),
                                          ("出答案自动复制", copy_var),
                                          ("分歧追加采样", esc_var),
@@ -1448,7 +1565,8 @@ class App:
                                          ("同题缓存秒出", cache_var),
                                          ("一屏多题分别作答", multi_var),
                                          ("答完回到原窗口", refocus_var),
-                                         ("极速模式", fast_var))):
+                                         ("极速模式", fast_var),
+                                         ("🟡时 R1 复核", r1_var))):
             tk.Checkbutton(checks, text=text, variable=var, bg=bg, fg=UI["dim"],
                            selectcolor=card, activebackground=bg,
                            activeforeground=UI["text"], bd=0, highlightthickness=0,
@@ -1501,6 +1619,7 @@ class App:
             self.cfg["multi"] = bool(multi_var.get())
             self.cfg["refocus"] = bool(refocus_var.get())
             self.cfg["fast"] = bool(fast_var.get())
+            self.cfg["reasoner"] = bool(r1_var.get())
             self.cfg["ocr_quality"] = (
                 "high" if qual_var.get().startswith("高精度") else "standard")
             cfg_mod.save(self.cfg)
