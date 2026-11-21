@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import json
 import os
 import shutil
@@ -79,6 +81,8 @@ def _text_score(text: str) -> float:
 
 
 # 本地 OCR 质量分达到这个值就不再叫视觉模型（0-100，经验值）
+
+_EMPTY_PAREN = re.compile(r"\bsqrt\s*\(\s*\)|\(\s*\)", re.I)
 VISION_FALLBACK_SCORE = 45.0
 
 
@@ -185,6 +189,11 @@ def read_with_ocr(image_path: str, timeout_s: int = 120,
 
         raw = psocr.recognize(
             image_path, timeout_s=timeout_s, quality=quality).strip()
+        # 空括号 = 括号里的系数被吞（实测 sqrt(2x+1)=5 会被读成 sqrt()x + 1 ) = 5）
+        if _EMPTY_PAREN.search(raw):
+            res.warnings.append(
+                "OCR 读到了空括号/缺系数（如 sqrt()x）——括号里或根号下的系数可能被吞了；"
+                "建议把题干那一行一起框进来，或按 Ctrl+Alt+T 用剪贴板文字作答")
         res.text, fixes = ocrfix.repair(raw)
         if fixes:
             res.warnings.append(f"修了 {fixes} 处 OCR 形近字/数学符号误识别")
