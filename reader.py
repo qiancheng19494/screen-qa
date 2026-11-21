@@ -55,6 +55,24 @@ def ensure_shims() -> bool:
 ensure_shims()
 
 
+def _text_score(text: str) -> float:
+    """给一段文本打粗糙的质量分（0-100），用于决定要不要上视觉模型。"""
+    try:
+        import psocr
+
+        return float(psocr.text_score(text))
+    except Exception:  # noqa: BLE001
+        t = "".join(text.split())
+        if not t:
+            return 0.0
+        ok = sum(1 for c in t if c.isalnum() or c in "=+-−×÷/*^().,%:：；[]{}<>√")
+        return round(100.0 * ok / len(t), 1)
+
+
+# 本地 OCR 质量分达到这个值就不再叫视觉模型（0-100，经验值）
+VISION_FALLBACK_SCORE = 45.0
+
+
 @dataclass
 class ReadResult:
     text: str = ""
@@ -179,8 +197,34 @@ def read_image(image_path: str, order: list[str] | None = None,
     ocr_quality="high" 时本地 OCR 会多试放大锐化/反色候选，慢约 1 秒但更准。
     """
     log = log or (lambda m: None)
-    order = order or ["modlens", "winocr"]
+    order = order or ["winocr", "modlens"]
     errors: list[str] = []
+
+    # ── 智能短路：本地 OCR 先跑（0.5 秒级），质量够好就不去碰视觉模型。
+    # 视觉模型要拉起 CLI，冷启动可能几十秒；只有 OCR 明显不行（乱码/字太少）
+    # 或这题必须看图（几何/图表）时才值得等。
+    if order and order[0] in ("winocr", "psocr", "rapidocr"):
+        log("本地 OCR 识别中…")
+        first = read_with_ocr(image_path, quality=ocr_quality)
+        if first.text:
+            try:
+                import ocrfix
+
+                fixed, n = ocrfix.repair(first.text)
+                if n:
+                    first.text = fixed
+                    first.warnings = list(first.warnings) + [f"修了 {n} 处 OCR 形近字/数学符号误识别"]
+            except Exception:  # noqa: BLE001
+                pass
+            score = _text_score(first.text)
+            if score >= VISION_FALLBACK_SCORE and len(first.text.strip()) >= 25:
+                log(f"本地 OCR 够用（质量 {score:.0f}），跳过视觉模型")
+                return first
+            log(f"本地 OCR 质量偏低（{score:.0f}），再用视觉模型看一次…")
+            errors.append(f"winocr 质量偏低（{score:.0f}）")
+        else:
+            errors.append(f"winocr 不可用（{first.error}）")
+        order = [b for b in order if b not in ("winocr", "psocr", "rapidocr")]
 
     for backend in order:
         if backend == "modlens":

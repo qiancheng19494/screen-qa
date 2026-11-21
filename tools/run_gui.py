@@ -8,11 +8,28 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import time
+import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LOG = ROOT / "_startup_error.log"
+
+
+def pick_log() -> Path:
+    """优先写在程序目录；目录只读时退到系统临时目录，绝不因为写日志而崩掉。"""
+    for cand in (ROOT / "_startup_error.log",
+                 Path(tempfile.gettempdir()) / "screen_qa_startup_error.log"):
+        try:
+            with open(cand, "ab"):
+                pass
+            return cand
+        except OSError:
+            continue
+    return Path(os.devnull)
+
+
+LOG = pick_log()
 PYW = Path(sys.executable).with_name("pythonw.exe")
 if not PYW.is_file():
     PYW = Path(sys.executable)
@@ -46,7 +63,11 @@ def main() -> int:
         except OSError:
             pass
 
-    with open(LOG, "wb") as log:
+    try:
+        log = open(LOG, "wb")
+    except OSError:
+        log = open(os.devnull, "wb")
+    with log:
         proc = subprocess.Popen([str(PYW), str(ROOT / "app.py")], cwd=str(ROOT),
                                 stdout=log, stderr=log, env=env,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -73,4 +94,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException:  # noqa: BLE001
+        popup("屏幕问答 · 启动失败",
+              "启动器自己出错了：\n\n" + traceback.format_exc()[-1200:])
+        sys.exit(1)

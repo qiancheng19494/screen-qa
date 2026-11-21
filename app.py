@@ -41,7 +41,7 @@ APP_TITLE = "屏幕问答 · DeepSeek"
 BACKEND_LABEL = {"winocr": "本地OCR", "modlens": "视觉模型"}
 
 READER_LABELS = {
-    "自动（视觉优先）": ["modlens", "winocr"],
+    "自动（先本地OCR）": ["winocr", "modlens"],
     "仅视觉模型": ["modlens"],
     "仅本地 OCR": ["winocr"],
 }
@@ -273,7 +273,7 @@ def _fast_downgrade(items, cfg):
 def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     t0 = time.time()
 
-    reader_order = cfg.get("reader_order") or ["modlens", "winocr"]
+    reader_order = cfg.get("reader_order") or ["winocr", "modlens"]
     emit("log", f"识别中（{' → '.join(reader_order)}）…")
     rr = reader.read_image(
         image_path,
@@ -752,7 +752,7 @@ class App:
         return "break"
 
     def _reader_label(self):
-        order = self.cfg.get("reader_order") or ["modlens", "winocr"]
+        order = self.cfg.get("reader_order") or ["winocr", "modlens"]
         for label, val in READER_LABELS.items():
             if val == order:
                 return label
@@ -1725,5 +1725,30 @@ def main():
     root.mainloop()
 
 
+def _fatal_popup(text: str) -> None:
+    """启动/运行中崩了：既要写日志，也要弹窗——绝不"点了没反应"。"""
+    try:
+        with open(ROOT / "_startup_error.log", "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from tkinter import messagebox
+        r = tk.Tk()
+        r.withdraw()
+        messagebox.showerror("屏幕问答 · 启动失败", text[-1500:])
+        r.destroy()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException:  # noqa: BLE001
+        import traceback
+
+        _fatal_popup("启动失败，请把这段发给开发者：\n\n" + traceback.format_exc()[-1500:])
+        raise

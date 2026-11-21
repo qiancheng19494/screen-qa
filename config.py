@@ -16,8 +16,8 @@ DEFAULTS = {
     "samples": 3,
     "verify": True,
     "temperature": 0.7,
-    "reader_order": ["modlens", "winocr"],
-    "modlens_timeout": 300,
+    "reader_order": ["winocr", "modlens"],
+    "modlens_timeout": 45,
     "hotkey_region": "ctrl+alt+q",
     "hotkey_full": "ctrl+alt+w",
     "always_on_top": True,
@@ -49,6 +49,11 @@ def load() -> dict:
                 cfg.update({k: v for k, v in raw.items() if k in DEFAULTS})
         except Exception:  # noqa: BLE001
             pass
+    # 布尔字段一律归一（避免 BooleanVar 的 tristate None 写进配置）
+    for _k in ("verify", "escalate", "auto_copy", "always_on_top", "sound",
+               "dedupe", "cache", "multi", "fast", "reasoner", "refocus"):
+        if _k in cfg:
+            cfg[_k] = bool(cfg.get(_k, DEFAULTS[_k]))
     # 环境变量优先
     env_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     if env_key and not cfg.get("api_key"):
