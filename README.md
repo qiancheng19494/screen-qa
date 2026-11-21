@@ -93,6 +93,19 @@
 
 **必须说清楚**：没有任何程序能保证"错误率 ≤ 1%"。上面这些手段把错误率压到很低（同题三次采样一致 + 审核通过时最可靠），但模型本身、OCR、题目表述都可能出错。考试/重要场景请把它当"快速参考"，自己再核一遍。
 
+## 打包成 exe（免安装）
+
+```
+python tools/build_exe.py
+```
+
+产物：`dist\屏幕问答\屏幕问答.exe`（旁边是 `_internal\`，整个文件夹一起拷走即可，约 44 MB）。
+已经放好的一份：`C:\Users\MI\Desktop\屏幕问答\程序\屏幕问答.exe`，双击即用，**不需要装 Python**。
+
+- 为什么默认是"文件夹 + exe"而不是单文件：启动快（实测 2 秒级）、不用往 `%TEMP%` 解压（某些受限环境解压会报 `Failed to create parent directory structure`）、杀软误报少。
+- 想要单文件可以 `python tools/build_exe.py --onefile`，代价是每次启动要解压约 1–2 秒。
+- exe 版会把 `psocr.ps1`、`assets\`、`tools\cli_shims\` 在首次运行时自解到 exe 旁边（配置文件也在旁边，删了会重建默认值）。
+
 ## 桌面版（最快上手）
 
 把 `screen-qa` 整个文件夹放到桌面（例如 `C:\Users\MI\Desktop\屏幕问答`），双击里面的 **`启动.bat`**：

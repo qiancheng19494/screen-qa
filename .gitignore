@@ -1,7 +1,6 @@
 # 本地私密配置（含 API Key）绝不能提交
 config.json
 .env
-
 # 运行产物
 history/
 _tmp/
@@ -13,15 +12,26 @@ _zh_test*.png
 _shot*.png
 _test_*.png
 *_test.png
-
 # 测试用图片
 _mathlab*.png
 _*.png
 cache.json
 _run.log
 nohup.out
-
 _dist_test/
 _pub_test/
 __pycache__/
 _*.py
+dist/
+_pyi/
+_pyi2/
+_pyi3/
+_pyi4/
+_pyi5/
+_d2/
+*.spec
+_shots*.py
+_shot_*.py
+_test_*.py
+_fixlnk*.ps1
+_shot_settings5.py

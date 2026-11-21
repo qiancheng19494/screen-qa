@@ -14,6 +14,7 @@ import hashlib
 import json
 import queue
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -25,7 +26,16 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox
 
-ROOT = Path(__file__).resolve().parent
+def _app_dir() -> "Path":
+    """打包成 exe 后，程序目录 = exe 所在目录；源码运行时 = 本文件目录。"""
+    import sys as _sys
+
+    if getattr(_sys, "frozen", False):
+        return Path(_sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+ROOT = _app_dir()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -477,7 +487,47 @@ class Pill(tk.Canvas):
 
 
 # ---------------------------------------------------------------- 无界面模式
+
+def ensure_bundled_files() -> None:
+    """exe 版：把只读资源从临时解包目录搬到 exe 旁边（程序只用 ROOT 相对路径）。"""
+    src = getattr(sys, "_MEIPASS", None)
+    if not src:
+        return
+    srcp = Path(src)
+    rels = (
+        "psocr.ps1",
+        "assets/app.ico",
+        "assets/icon-64.png",
+        "assets/icon-256.png",
+        "tools/cli_shims/codex.exe",
+        "tools/cli_shims/claude.exe",
+        "README.md",
+        "docs/详解.md",
+    )
+    for rel in rels:
+        s_path, d_path = srcp / rel, ROOT / rel
+        if not s_path.is_file() or d_path.exists():
+            continue
+        try:
+            d_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(s_path, d_path)
+        except Exception:  # noqa: BLE001
+            pass
+
 def cli_main(args) -> int:
+    ensure_bundled_files()
+    # exe（--windowed）里 sys.stdout/stderr 是 None：改写日志文件，CLI 才不会崩
+    if sys.stdout is None or sys.stderr is None:
+        try:
+            _log = open(ROOT / "_cli.log", "a", encoding="utf-8", buffering=1)
+        except Exception:  # noqa: BLE001
+            import io
+
+            _log = io.StringIO()
+        if sys.stdout is None:
+            sys.stdout = _log
+        if sys.stderr is None:
+            sys.stderr = _log
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -1207,6 +1257,8 @@ class App:
                         self.shot_full()
                     elif name == "redo":
                         self.redo()
+                    elif name == "paste":
+                        self.paste_image()
             except queue.Empty:
                 pass
             except Exception:  # noqa: BLE001
@@ -1227,6 +1279,9 @@ class App:
             # Ctrl+Alt+R：重算上一次（答案看着不对时不用回窗口点按钮）
             self.hk.add("redo", self.cfg.get("hotkey_redo", "ctrl+alt+r"),
                         ["ctrl+alt+e", "ctrl+shift+r"])
+            # Ctrl+Alt+V：直接作答剪贴板里的图（截图工具存到剪贴板时，不用再框选）
+            self.hk.add("paste", self.cfg.get("hotkey_paste", "ctrl+alt+v"),
+                        ["ctrl+shift+v", "ctrl+alt+b"])
             if not self.hk.start():
                 self.log(f"⚠ 全局热键不可用：{self.hk.error}（按钮仍可用）")
             elif getattr(self.hk, "failed", None):
@@ -1256,6 +1311,8 @@ class App:
                     self.log(f"ℹ {want_full.replace('+', '+').upper()} 被别的软件占用，整屏已改用 {full}")
             redo = self._key_name("redo", "ctrl+alt+r")
             tips.append(f"重算 {redo}")
+            paste = self._key_name("paste", "ctrl+alt+v")
+            tips.append(f"剪贴板 {paste}")
             self.set_status(" · ".join(tips))
         except Exception:  # noqa: BLE001
             pass
@@ -1642,6 +1699,67 @@ class App:
 
             threading.Thread(target=worker, daemon=True).start()
 
+        def selfcheck():
+            """一键体检：Key / OCR / 视觉 / 热键 / 连续区域，逐项给结论。"""
+            lines = []
+            try:
+                key = (vars_.get("api_key").get() or "").strip() if vars_.get("api_key") else ""
+                ok_key = key.startswith("sk-") and len(key) > 20
+                lines.append(("✅" if ok_key else "❌") + " DeepSeek Key：" +
+                             ("已填写" if ok_key else "没填 / 格式不对（应以 sk- 开头）"))
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"❌ Key 检查异常：{exc}")
+            try:
+                import psocr
+
+                ok_ocr = psocr.available()
+                lines.append(("✅" if ok_ocr else "❌") + " 本地 OCR（Windows）：" +
+                             ("可用" if ok_ocr else "不可用（找不到 powershell.exe）"))
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"❌ 本地 OCR 检查异常：{exc}")
+            try:
+                import reader
+
+                st = reader.backend_status()
+                ok_v = bool(st.get("modlens", {}).get("available"))
+                lines.append(("✅" if ok_v else "⚠️") + " 视觉模型（modlens）：" +
+                             ("已找到，可用「视觉自检」实测" if ok_v
+                              else "找不到 modlens / node —— 只影响几何图，文字题照常"))
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"⚠️ 视觉模型检查异常：{exc}")
+            try:
+                bound = getattr(getattr(self, "hk", None), "bound", {}) or {}
+                failed = getattr(getattr(self, "hk", None), "failed", []) or []
+                if bound:
+                    pairs = "、".join(f"{k}={v}" for k, v in bound.items())
+                    lines.append("✅ 全局热键：" + pairs)
+                if failed:
+                    lines.append("⚠️ 没注册上的热键：" + "、".join(failed))
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"⚠️ 热键检查异常：{exc}")
+            try:
+                if self.cont_region:
+                    x, y, w, h = self.cont_region
+                    lines.append(f"✅ 连续截图区域：({x},{y}) {w}×{h}")
+                else:
+                    lines.append("ℹ️ 连续截图区域：整个屏幕")
+            except Exception:  # noqa: BLE001
+                pass
+            lines.append(f"ℹ️ 模型={self.cfg.get('model')} · 采样={self.cfg.get('samples')}"
+                         f" · 精度={self.cfg.get('ocr_quality')} · 缓存={'开' if self.cfg.get('cache') else '关'}")
+            text = "\n".join(lines)
+            try:
+                self.detail.configure(state="normal")
+                self.detail.delete("1.0", "end")
+                self.detail.insert("end", "【自检结果】\n" + text)
+                self.detail.configure(state="disabled")
+            except Exception:  # noqa: BLE001
+                pass
+            messagebox.showinfo("自检", text)
+
+        Pill(row6, "自检", selfcheck, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+
         Pill(row6, "视觉自检", vision_selftest, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
 
@@ -1707,6 +1825,7 @@ class App:
 
 
 def main():
+    ensure_bundled_files()
     ap = argparse.ArgumentParser(description="屏幕问答助手")
     ap.add_argument("--cli", action="store_true", help="无界面模式，截全屏并作答")
     ap.add_argument("--image", help="直接处理指定图片")

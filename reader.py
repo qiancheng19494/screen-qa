@@ -20,7 +20,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parent
+def _app_dir() -> "Path":
+    """打包成 exe 后，程序目录 = exe 所在目录；源码运行时 = 本文件目录。"""
+    import sys as _sys
+
+    if getattr(_sys, "frozen", False):
+        return Path(_sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+ROOT = _app_dir()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

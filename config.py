@@ -5,7 +5,16 @@ import json
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+def _app_dir() -> "Path":
+    """打包成 exe 后，程序目录 = exe 所在目录；源码运行时 = 本文件目录。"""
+    import sys as _sys
+
+    if getattr(_sys, "frozen", False):
+        return Path(_sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+ROOT = _app_dir()
 CONFIG_PATH = ROOT / "config.json"
 HISTORY_DIR = ROOT / "history"
 
@@ -20,6 +29,8 @@ DEFAULTS = {
     "modlens_timeout": 45,
     "hotkey_region": "ctrl+alt+q",
     "hotkey_full": "ctrl+alt+w",
+    "hotkey_redo": "ctrl+alt+r",
+    "hotkey_paste": "ctrl+alt+v",
     "always_on_top": True,
     "font_size": 12,
     # 连续截图
