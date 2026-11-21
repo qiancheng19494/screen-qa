@@ -1,0 +1,613 @@
+{
+  "rows": [
+    {
+      "case": {
+        "image": "_q9.png",
+        "expect": [
+          "x = 6",
+          "6"
+        ],
+        "note": "Question 9 of 12 / 9x+6=60"
+      },
+      "ok": true,
+      "answer": "x = 6",
+      "fill": "6",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 1938,
+      "elapsed": 3.73,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "_q11.png",
+        "expect": [
+          "2, 3"
+        ],
+        "note": "x^2-5x+6=0 两空"
+      },
+      "ok": true,
+      "answer": "2, 3",
+      "fill": "2, 3",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 2300,
+      "elapsed": 3.4,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "_mathlab_single.png",
+        "expect": [
+          "x = 3",
+          "3"
+        ],
+        "note": "MyMathLab 4x-7=5"
+      },
+      "ok": true,
+      "answer": "x = 3",
+      "fill": "3",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1933,
+      "elapsed": 9.77,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "_mathlab_q7.png",
+        "expect": [
+          "x = 5",
+          "5"
+        ],
+        "note": "5x+9=34"
+      },
+      "ok": true,
+      "answer": "x = 5",
+      "fill": "5",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 1789,
+      "elapsed": 3.17,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "_lowcontrast_test.png",
+        "expect": [
+          "x = 4",
+          "4"
+        ],
+        "note": "浅灰字 2(x+3)=14"
+      },
+      "ok": true,
+      "answer": "B. x = 4",
+      "fill": "B",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 2039,
+      "elapsed": 3.71,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "_zh_test.png",
+        "expect": [
+          "B",
+          "120"
+        ],
+        "note": "中文选择题 成本/八折"
+      },
+      "ok": true,
+      "answer": "B. 120 元",
+      "fill": "B",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 2224,
+      "elapsed": 3.08,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "_zh_test3.png",
+        "expect": [
+          "3/5"
+        ],
+        "note": "深色小字 lim sin(3x)/(5x)"
+      },
+      "ok": true,
+      "answer": "B. 3/5",
+      "fill": "3/5",
+      "confidence": "中",
+      "check": "skip",
+      "calls": 7,
+      "tokens": 5570,
+      "elapsed": 11.41,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "_mathlab_multi_big.png",
+        "expect": [
+          "4",
+          "A",
+          "64"
+        ],
+        "note": "一屏三题"
+      },
+      "ok": true,
+      "answer": "x = 4",
+      "fill": "4",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 12,
+      "tokens": 5815,
+      "elapsed": 7.74,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c01_frac.png",
+        "expect": [
+          "12"
+        ],
+        "mode": "value",
+        "note": "分数系数"
+      },
+      "ok": true,
+      "answer": "x = 12",
+      "fill": "12",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 2030,
+      "elapsed": 3.61,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c02_radical.png",
+        "expect": [
+          "12"
+        ],
+        "mode": "value",
+        "note": "根式方程（本机 OCR 吞掉 sqrt 里的系数 2）",
+        "known_ocr_limit": true
+      },
+      "ok": false,
+      "answer": "x = 24",
+      "fill": "24",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1950,
+      "elapsed": 3.38,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c03_radical2.png",
+        "expect": [
+          "49"
+        ],
+        "mode": "value",
+        "note": "平方根"
+      },
+      "ok": true,
+      "answer": "x = 49",
+      "fill": "49",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1726,
+      "elapsed": 3.25,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c04_ineq.png",
+        "expect": [
+          "x<-3",
+          "x<-3"
+        ],
+        "mode": "text",
+        "note": "不等式方向翻转"
+      },
+      "ok": true,
+      "answer": "x < -3",
+      "fill": "x < -3",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1915,
+      "elapsed": 2.93,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c05_exp.png",
+        "expect": [
+          "5"
+        ],
+        "mode": "value",
+        "note": "指数方程"
+      },
+      "ok": true,
+      "answer": "x = 5",
+      "fill": "5",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 1666,
+      "elapsed": 3.03,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c06_log.png",
+        "expect": [
+          "8"
+        ],
+        "mode": "value",
+        "note": "对数方程"
+      },
+      "ok": true,
+      "answer": "x = 8",
+      "fill": "8",
+      "confidence": "中",
+      "check": "fail",
+      "calls": 4,
+      "tokens": 1779,
+      "elapsed": 2.89,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c07_quad.png",
+        "expect": [
+          "1",
+          "3"
+        ],
+        "mode": "set",
+        "note": "二次方程两解"
+      },
+      "ok": true,
+      "answer": "1, 3",
+      "fill": "1, 3",
+      "confidence": "中",
+      "check": "ok",
+      "calls": 7,
+      "tokens": 4091,
+      "elapsed": 6.05,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c08_percent.png",
+        "expect": [
+          "36"
+        ],
+        "mode": "value",
+        "note": "百分比"
+      },
+      "ok": true,
+      "answer": "36",
+      "fill": "36",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1522,
+      "elapsed": 2.51,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c09_fracadd.png",
+        "expect": [
+          "5/6"
+        ],
+        "mode": "text",
+        "note": "分数相加"
+      },
+      "ok": true,
+      "answer": "5/6",
+      "fill": "5/6",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1748,
+      "elapsed": 2.25,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c10_simplify.png",
+        "expect": [
+          "x+3"
+        ],
+        "mode": "text",
+        "note": "化简（纯符号行整行丢失）",
+        "known_ocr_limit": true
+      },
+      "ok": false,
+      "answer": "题目不完整，缺少需要化简的表达式，无法确定答案。",
+      "fill": "题目不完整, 缺少需要化简的表达式, 无法确定答案",
+      "confidence": "中",
+      "check": "skip",
+      "calls": 7,
+      "tokens": 3478,
+      "elapsed": 7.26,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c11_slope.png",
+        "expect": [
+          "3"
+        ],
+        "mode": "value",
+        "note": "斜率"
+      },
+      "ok": true,
+      "answer": "3",
+      "fill": "3",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1775,
+      "elapsed": 3.17,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c12_fvalue.png",
+        "expect": [
+          "5"
+        ],
+        "mode": "value",
+        "note": "函数值"
+      },
+      "ok": true,
+      "answer": "5",
+      "fill": "5",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 1894,
+      "elapsed": 3.05,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c13_prop.png",
+        "expect": [
+          "12"
+        ],
+        "mode": "value",
+        "note": "比例"
+      },
+      "ok": true,
+      "answer": "x = 12",
+      "fill": "12",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 1872,
+      "elapsed": 2.95,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c14_discount.png",
+        "expect": [
+          "50"
+        ],
+        "mode": "value",
+        "note": "应用题-折扣"
+      },
+      "ok": true,
+      "answer": "$50",
+      "fill": "50",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1782,
+      "elapsed": 2.83,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c15_speed.png",
+        "expect": [
+          "150"
+        ],
+        "mode": "value",
+        "note": "应用题-路程"
+      },
+      "ok": true,
+      "answer": "150 miles",
+      "fill": "150 miles",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1750,
+      "elapsed": 2.51,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c16_average.png",
+        "expect": [
+          "21"
+        ],
+        "mode": "value",
+        "note": "平均数"
+      },
+      "ok": true,
+      "answer": "21",
+      "fill": "21",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1728,
+      "elapsed": 3.32,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c17_increase.png",
+        "expect": [
+          "25"
+        ],
+        "mode": "value",
+        "note": "增长率"
+      },
+      "ok": true,
+      "answer": "25%",
+      "fill": "25%",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1794,
+      "elapsed": 2.57,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c18_comb.png",
+        "expect": [
+          "10"
+        ],
+        "mode": "value",
+        "note": "组合数（纯符号行整行丢失）",
+        "known_ocr_limit": true
+      },
+      "ok": false,
+      "answer": "题目缺少具体的组合数（如 \\(n\\) 和 \\(r\\) 的取值），无法计算。",
+      "fill": "题目缺少具体的组合数(如 \\(n\\) 和 \\(r\\) 的取值), 无法计算",
+      "confidence": "中",
+      "check": "skip",
+      "calls": 7,
+      "tokens": 3781,
+      "elapsed": 7.5,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c19_system.png",
+        "expect": [
+          "3",
+          "1"
+        ],
+        "mode": "set",
+        "note": "方程组（修正：解为 x=3,y=1）"
+      },
+      "ok": true,
+      "answer": "x = 3, y = 1",
+      "fill": "x=3, y=1",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 2075,
+      "elapsed": 3.86,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c20_decimal.png",
+        "expect": [
+          "24"
+        ],
+        "mode": "value",
+        "note": "小数系数"
+      },
+      "ok": true,
+      "answer": "x = 24",
+      "fill": "24",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1947,
+      "elapsed": 3.41,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c21_negative.png",
+        "expect": [
+          "-1"
+        ],
+        "mode": "value",
+        "note": "负数解"
+      },
+      "ok": true,
+      "answer": "x = -1",
+      "fill": "-1",
+      "confidence": "高",
+      "check": "skip",
+      "calls": 4,
+      "tokens": 1934,
+      "elapsed": 2.73,
+      "cached": false,
+      "err": ""
+    },
+    {
+      "case": {
+        "image": "cases/c22_fraction_mix.png",
+        "expect": [
+          "15"
+        ],
+        "mode": "value",
+        "note": "分式方程"
+      },
+      "ok": true,
+      "answer": "x = 15",
+      "fill": "15",
+      "confidence": "高",
+      "check": "ok",
+      "calls": 4,
+      "tokens": 1796,
+      "elapsed": 3.31,
+      "cached": false,
+      "err": ""
+    }
+  ],
+  "ok": 27,
+  "total": 30,
+  "elapsed": 124.38,
+  "tokens": 69641
+}

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
+from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,12 +25,47 @@ import config as C       # noqa: E402
 
 
 def _norm(s: str) -> str:
-    return "".join(str(s or "").split()).lower().replace("−", "-")
+    return "".join(str(s or "").split()).lower().replace("\u2212", "-")
 
 
-def _hit(expects, res) -> bool:
+_NUM_RE = re.compile(r"-?\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?")
+
+
+def _frac(tok: str):
+    try:
+        if "/" in tok:
+            a, b = tok.split("/")
+            return Fraction(a) / Fraction(b)
+        return Fraction(tok)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _nums(text: str):
+    out = []
+    for m in _NUM_RE.finditer(str(text or "").replace("\u2212", "-")):
+        f = _frac(m.group(0))
+        if f is not None:
+            out.append(f)
+    return out
+
+
+def _hit(expects, res, mode: str = "text") -> bool:
+    """三种判定：
+    text  —— 期望串都要在"答案|填入"里出现（原来 8 条用例的语义）
+    value —— 期望值（数值/分数）出现在答案或填入里，允许 1e-6 误差
+    set   —— 多值答案：填入里的数字集合要覆盖全部期望值（顺序无关）
+    """
     hay = _norm(res.answer) + "|" + _norm(getattr(res, "fill", ""))
-    return all(_norm(e) in hay for e in expects)
+    if mode == "text":
+        return all(_norm(e) in hay for e in expects)
+    want = [_frac(str(e)) for e in expects]
+    want = [w for w in want if w is not None]
+    got = _nums(res.answer) + _nums(getattr(res, "fill", ""))
+    if mode == "set":
+        return all(any(abs(g - w) <= Fraction(1, 10**6) for g in got) for w in want)
+    # value：任一期望值命中即可
+    return any(any(abs(g - w) <= Fraction(1, 10**6) for g in got) for w in want)
 
 
 def run_case(case: dict, cfg: dict, use_cache: bool) -> dict:
@@ -47,7 +84,8 @@ def run_case(case: dict, cfg: dict, use_cache: bool) -> dict:
     if res is None:
         return {"case": case, "ok": False, "err": "没有结果"}
     items = payload.get("items") or [res]
-    ok = _hit(case["expect"], res)
+    mode = case.get("mode", "text")
+    ok = _hit(case["expect"], res, mode)
     if len(items) > 1:  # 多题：每一题的答案都要出现在对应期望里（宽松匹配）
         joined = "|".join(_norm(i.answer) + "|" + _norm(i.fill or "") for i in items)
         ok = all(_norm(e) in joined for e in case["expect"])
@@ -109,11 +147,19 @@ def main() -> int:
               f"验算={row['check'] or '-':<4} {row['elapsed']:>5.1f}s "
               f"{row['tokens']:>5}tok{'  [缓存]' if row['cached'] else ''}")
     ok = sum(1 for r in rows if r.get("ok"))
+    ocr_limited = [r for r in rows
+                   if not r.get("ok") and (r.get("case") or {}).get("known_ocr_limit")]
     used = [r for r in rows if not r.get("err")]
     total_t = sum(r["elapsed"] for r in used)
     total_tok = sum(r["tokens"] for r in used)
     cost = C.cost_of(total_tok, 0, cfg)
     print("-" * 78)
+    if ocr_limited:
+        names = "、".join((r["case"].get("image", "").split("/")[-1]) for r in ocr_limited)
+        readable = len(rows) - len(ocr_limited)
+        model_ok = ok
+        print(f"其中受本地 OCR 限制（纯符号行丢失/系数被吞）：{len(ocr_limited)} 条 → {names}")
+        print(f"在能读到的题面上：{model_ok}/{readable} = {model_ok / max(1, readable):.0%}")
     print(f"正确 {ok}/{len(rows)} = {ok / max(1, len(rows)):.0%} · "
           f"总耗时 {total_t:.1f}s · 平均 {total_t / max(1, len(used)):.1f}s/题 · "
           f"{total_tok} tokens · 约 ¥{cost:.4f}")

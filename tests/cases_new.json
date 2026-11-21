@@ -1,0 +1,181 @@
+[
+  {
+    "image": "cases/c01_frac.png",
+    "expect": [
+      "12"
+    ],
+    "mode": "value",
+    "note": "分数系数"
+  },
+  {
+    "image": "cases/c02_radical.png",
+    "expect": [
+      "12"
+    ],
+    "mode": "value",
+    "note": "根式方程"
+  },
+  {
+    "image": "cases/c03_radical2.png",
+    "expect": [
+      "49"
+    ],
+    "mode": "value",
+    "note": "平方根"
+  },
+  {
+    "image": "cases/c04_ineq.png",
+    "expect": [
+      "x<-3",
+      "x<-3"
+    ],
+    "mode": "text",
+    "note": "不等式方向翻转"
+  },
+  {
+    "image": "cases/c05_exp.png",
+    "expect": [
+      "5"
+    ],
+    "mode": "value",
+    "note": "指数方程"
+  },
+  {
+    "image": "cases/c06_log.png",
+    "expect": [
+      "8"
+    ],
+    "mode": "value",
+    "note": "对数方程"
+  },
+  {
+    "image": "cases/c07_quad.png",
+    "expect": [
+      "1",
+      "3"
+    ],
+    "mode": "set",
+    "note": "二次方程两解"
+  },
+  {
+    "image": "cases/c08_percent.png",
+    "expect": [
+      "36"
+    ],
+    "mode": "value",
+    "note": "百分比"
+  },
+  {
+    "image": "cases/c09_fracadd.png",
+    "expect": [
+      "5/6"
+    ],
+    "mode": "text",
+    "note": "分数相加"
+  },
+  {
+    "image": "cases/c10_simplify.png",
+    "expect": [
+      "x+3"
+    ],
+    "mode": "text",
+    "note": "化简"
+  },
+  {
+    "image": "cases/c11_slope.png",
+    "expect": [
+      "3"
+    ],
+    "mode": "value",
+    "note": "斜率"
+  },
+  {
+    "image": "cases/c12_fvalue.png",
+    "expect": [
+      "5"
+    ],
+    "mode": "value",
+    "note": "函数值"
+  },
+  {
+    "image": "cases/c13_prop.png",
+    "expect": [
+      "12"
+    ],
+    "mode": "value",
+    "note": "比例"
+  },
+  {
+    "image": "cases/c14_discount.png",
+    "expect": [
+      "50"
+    ],
+    "mode": "value",
+    "note": "应用题-折扣"
+  },
+  {
+    "image": "cases/c15_speed.png",
+    "expect": [
+      "150"
+    ],
+    "mode": "value",
+    "note": "应用题-路程"
+  },
+  {
+    "image": "cases/c16_average.png",
+    "expect": [
+      "21"
+    ],
+    "mode": "value",
+    "note": "平均数"
+  },
+  {
+    "image": "cases/c17_increase.png",
+    "expect": [
+      "25"
+    ],
+    "mode": "value",
+    "note": "增长率"
+  },
+  {
+    "image": "cases/c18_comb.png",
+    "expect": [
+      "10"
+    ],
+    "mode": "value",
+    "note": "组合数"
+  },
+  {
+    "image": "cases/c19_system.png",
+    "expect": [
+      "3",
+      "4"
+    ],
+    "mode": "set",
+    "note": "方程组"
+  },
+  {
+    "image": "cases/c20_decimal.png",
+    "expect": [
+      "24"
+    ],
+    "mode": "value",
+    "note": "小数系数"
+  },
+  {
+    "image": "cases/c21_negative.png",
+    "expect": [
+      "-1"
+    ],
+    "mode": "value",
+    "note": "负数解"
+  },
+  {
+    "image": "cases/c22_fraction_mix.png",
+    "expect": [
+      "15"
+    ],
+    "mode": "value",
+    "note": "分式方程"
+  }
+]

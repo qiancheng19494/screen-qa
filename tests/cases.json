@@ -1,10 +1,247 @@
 [
-  {"image": "_q9.png",              "expect": ["x = 6", "6"],        "note": "Question 9 of 12 / 9x+6=60"},
-  {"image": "_q11.png",             "expect": ["2, 3"],              "note": "x^2-5x+6=0 两空"},
-  {"image": "_mathlab_single.png",  "expect": ["x = 3", "3"],        "note": "MyMathLab 4x-7=5"},
-  {"image": "_mathlab_q7.png",      "expect": ["x = 5", "5"],        "note": "5x+9=34"},
-  {"image": "_lowcontrast_test.png","expect": ["x = 4", "4"],        "note": "浅灰字 2(x+3)=14"},
-  {"image": "_zh_test.png",         "expect": ["B", "120"],          "note": "中文选择题 成本/八折"},
-  {"image": "_zh_test3.png",        "expect": ["3/5"],               "note": "深色小字 lim sin(3x)/(5x)"},
-  {"image": "_mathlab_multi_big.png","expect": ["4", "A", "64"],     "note": "一屏三题"}
+  {
+    "image": "_q9.png",
+    "expect": [
+      "x = 6",
+      "6"
+    ],
+    "note": "Question 9 of 12 / 9x+6=60"
+  },
+  {
+    "image": "_q11.png",
+    "expect": [
+      "2, 3"
+    ],
+    "note": "x^2-5x+6=0 两空"
+  },
+  {
+    "image": "_mathlab_single.png",
+    "expect": [
+      "x = 3",
+      "3"
+    ],
+    "note": "MyMathLab 4x-7=5"
+  },
+  {
+    "image": "_mathlab_q7.png",
+    "expect": [
+      "x = 5",
+      "5"
+    ],
+    "note": "5x+9=34"
+  },
+  {
+    "image": "_lowcontrast_test.png",
+    "expect": [
+      "x = 4",
+      "4"
+    ],
+    "note": "浅灰字 2(x+3)=14"
+  },
+  {
+    "image": "_zh_test.png",
+    "expect": [
+      "B",
+      "120"
+    ],
+    "note": "中文选择题 成本/八折"
+  },
+  {
+    "image": "_zh_test3.png",
+    "expect": [
+      "3/5"
+    ],
+    "note": "深色小字 lim sin(3x)/(5x)"
+  },
+  {
+    "image": "_mathlab_multi_big.png",
+    "expect": [
+      "4",
+      "A",
+      "64"
+    ],
+    "note": "一屏三题"
+  },
+  {
+    "image": "cases/c01_frac.png",
+    "expect": [
+      "12"
+    ],
+    "mode": "value",
+    "note": "分数系数"
+  },
+  {
+    "image": "cases/c02_radical.png",
+    "expect": [
+      "12"
+    ],
+    "mode": "value",
+    "note": "根式方程（本机 OCR 吞掉 sqrt 里的系数 2）",
+    "known_ocr_limit": true
+  },
+  {
+    "image": "cases/c03_radical2.png",
+    "expect": [
+      "49"
+    ],
+    "mode": "value",
+    "note": "平方根"
+  },
+  {
+    "image": "cases/c04_ineq.png",
+    "expect": [
+      "x<-3",
+      "x<-3"
+    ],
+    "mode": "text",
+    "note": "不等式方向翻转"
+  },
+  {
+    "image": "cases/c05_exp.png",
+    "expect": [
+      "5"
+    ],
+    "mode": "value",
+    "note": "指数方程"
+  },
+  {
+    "image": "cases/c06_log.png",
+    "expect": [
+      "8"
+    ],
+    "mode": "value",
+    "note": "对数方程"
+  },
+  {
+    "image": "cases/c07_quad.png",
+    "expect": [
+      "1",
+      "3"
+    ],
+    "mode": "set",
+    "note": "二次方程两解"
+  },
+  {
+    "image": "cases/c08_percent.png",
+    "expect": [
+      "36"
+    ],
+    "mode": "value",
+    "note": "百分比"
+  },
+  {
+    "image": "cases/c09_fracadd.png",
+    "expect": [
+      "5/6"
+    ],
+    "mode": "text",
+    "note": "分数相加"
+  },
+  {
+    "image": "cases/c10_simplify.png",
+    "expect": [
+      "x+3"
+    ],
+    "mode": "text",
+    "note": "化简（纯符号行整行丢失）",
+    "known_ocr_limit": true
+  },
+  {
+    "image": "cases/c11_slope.png",
+    "expect": [
+      "3"
+    ],
+    "mode": "value",
+    "note": "斜率"
+  },
+  {
+    "image": "cases/c12_fvalue.png",
+    "expect": [
+      "5"
+    ],
+    "mode": "value",
+    "note": "函数值"
+  },
+  {
+    "image": "cases/c13_prop.png",
+    "expect": [
+      "12"
+    ],
+    "mode": "value",
+    "note": "比例"
+  },
+  {
+    "image": "cases/c14_discount.png",
+    "expect": [
+      "50"
+    ],
+    "mode": "value",
+    "note": "应用题-折扣"
+  },
+  {
+    "image": "cases/c15_speed.png",
+    "expect": [
+      "150"
+    ],
+    "mode": "value",
+    "note": "应用题-路程"
+  },
+  {
+    "image": "cases/c16_average.png",
+    "expect": [
+      "21"
+    ],
+    "mode": "value",
+    "note": "平均数"
+  },
+  {
+    "image": "cases/c17_increase.png",
+    "expect": [
+      "25"
+    ],
+    "mode": "value",
+    "note": "增长率"
+  },
+  {
+    "image": "cases/c18_comb.png",
+    "expect": [
+      "10"
+    ],
+    "mode": "value",
+    "note": "组合数（纯符号行整行丢失）",
+    "known_ocr_limit": true
+  },
+  {
+    "image": "cases/c19_system.png",
+    "expect": [
+      "3",
+      "1"
+    ],
+    "mode": "set",
+    "note": "方程组（修正：解为 x=3,y=1）"
+  },
+  {
+    "image": "cases/c20_decimal.png",
+    "expect": [
+      "24"
+    ],
+    "mode": "value",
+    "note": "小数系数"
+  },
+  {
+    "image": "cases/c21_negative.png",
+    "expect": [
+      "-1"
+    ],
+    "mode": "value",
+    "note": "负数解"
+  },
+  {
+    "image": "cases/c22_fraction_mix.png",
+    "expect": [
+      "15"
+    ],
+    "mode": "value",
+    "note": "分式方程"
+  }
 ]
