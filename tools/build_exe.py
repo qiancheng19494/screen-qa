@@ -13,6 +13,11 @@ import argparse
 import shutil
 import subprocess
 import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

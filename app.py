@@ -41,12 +41,15 @@ if str(ROOT) not in sys.path:
 
 import capture  # noqa: E402
 import config as cfg_mod  # noqa: E402
+import extras  # noqa: E402
 import questions as qsplit  # noqa: E402
 import reader  # noqa: E402
 from deepseek_api import DeepSeekClient  # noqa: E402
 from solver import SolveResult, Solver  # noqa: E402
 
 APP_TITLE = "屏幕问答 · DeepSeek"
+APP_VERSION = extras.LOCAL_VERSION
+GITHUB_REPO = extras.GITHUB_REPO
 
 BACKEND_LABEL = {"winocr": "本地OCR", "modlens": "视觉模型"}
 
@@ -63,7 +66,7 @@ MODEL_ID2LABEL = {mid: lbl for lbl, mid in MODEL_CHOICES}
 MODELS = ["deepseek-chat", "deepseek-reasoner"]
 SAMPLE_CHOICES = ["1", "2", "3", "5"]
 
-UI = {
+DARK_UI = {
     "bg": "#0a0c10",
     "card": "#131820",
     "card2": "#0d1117",
@@ -80,6 +83,32 @@ UI = {
     "red": "#ff6b6b",
     "red_bg": "#2b1416",
 }
+LIGHT_UI = {
+    "bg": "#eef1f6",
+    "card": "#ffffff",
+    "card2": "#f7f9fc",
+    "border": "#d3dae4",
+    "text": "#151922",
+    "dim": "#4a5361",
+    "muted": "#7c8593",
+    "accent": "#2563eb",
+    "green": "#0f7a52",
+    "accent_bg": "#dbe7ff",
+    "green_bg": "#d6f5e6",
+    "amber": "#9a6508",
+    "amber_bg": "#fdf0d2",
+    "red": "#c02626",
+    "red_bg": "#fbe0e0",
+}
+UI = dict(DARK_UI)
+
+
+def apply_theme(name: str) -> str:
+    """换配色（在建界面之前调用；改完需要重开窗口才彻底生效）。"""
+    src = LIGHT_UI if str(name).lower() == "light" else DARK_UI
+    UI.clear()
+    UI.update(src)
+    return "light" if src is LIGHT_UI else "dark"
 FONT = "Microsoft YaHei UI"
 CONF_CHIP = {
     "高": ("🟢 高置信度", "green"),
@@ -284,6 +313,10 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
     t0 = time.time()
 
     reader_order = cfg.get("reader_order") or ["winocr", "modlens"]
+    if cfg.get("vision_first"):
+        # 几何图模式：图形/坐标轴本地 OCR 读不出来，必须让视觉模型看整图
+        reader_order = ["modlens", "winocr"]
+        emit("log", "几何图模式：先用视觉模型读整图…")
     emit("log", f"识别中（{' → '.join(reader_order)}）…")
     rr = reader.read_image(
         image_path,
@@ -296,9 +329,10 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
         return {"ok": False, "stage": "read", "error": rr.error,
                 "elapsed": time.time() - t0}
     if len(rr.text.strip()) < 12:
+        full_key = str(cfg.get("hotkey_full", "ctrl+alt+w")).upper()
         return {"ok": False, "stage": "read", "elapsed": time.time() - t0,
                 "error": (f"只识别到 {len(rr.text.strip())} 个字，基本等于没框到题目。"
-                          f"\n把题目（含题干和选项）框大一点，或按 {self._key_name('full', 'ctrl+alt+w')} 整屏。")}
+                          f"\n把题目（含题干和选项）框大一点，或按 {full_key} 整屏。")}
     emit("log", f"识别完成（{rr.backend}，{len(rr.text)} 字，{rr.elapsed:.1f}s）")
 
     key = _cache_key(rr.text, cfg)
@@ -314,8 +348,19 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
                 "ok": True, "text": rr.text, "backend": rr.backend,
                 "read_elapsed": rr.elapsed, "result": items[0], "items": items,
                 "elapsed": time.time() - t0, "warnings": rr.warnings,
-                "cached": True, "cached_at": hit.get("ts", 0),
+                "cached": True, "cached_at": hit.get("ts", 0), "key": key,
             }
+
+    # ---- 错题本：同一道题上次被你标记为"答错了" → 这次多问两路
+    samples_n = int(cfg.get("samples", 3))
+    try:
+        err_hit = cfg_mod.load_errors().get(key)
+    except Exception:  # noqa: BLE001
+        err_hit = None
+    if err_hit:
+        samples_n = min(5, samples_n + 2)
+        emit("log", f"⚠ 这题上次被标记为答错（已标记 {err_hit.get('hits', 1)} 次）"
+                    f"→ 本次多问 {samples_n - int(cfg.get('samples', 3))} 路")
 
     client = DeepSeekClient(
         api_key=cfg.get("api_key", ""),
@@ -327,12 +372,13 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
               and cfg.get("model") != "deepseek-reasoner")
     solver = Solver(
         client,
-        samples=int(cfg.get("samples", 3)),
+        samples=samples_n,
         verify=bool(cfg.get("verify", True)),
         temperature=float(cfg.get("temperature", 0.7)),
         progress=lambda m: emit("log", m),
         escalate=bool(cfg.get("escalate", True)),
         reasoner="deepseek-reasoner" if use_r1 else "",
+        dual=bool(cfg.get("dual")) and use_r1 and not cfg.get("fast"),
     )
 
     # ---- 一屏多题：切成一题一题，分别走同一套采样+投票+审核
@@ -359,6 +405,7 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
         "elapsed": time.time() - t0,
         "warnings": rr.warnings,
         "cached": False,
+        "key": key,
     }
 
     # ---- 成功作答才写缓存（失败的不缓存，免得下次直接给出错误结论）
@@ -384,6 +431,13 @@ def pretty_reasoning(text: str) -> str:
     body = re.sub(r"\n{3,}", "\n\n", body)
     return body or "（无）"
 
+
+
+def _item_res(x):
+    """多题结果既可能是 SolveResult，也可能是 (题面, SolveResult) 元组。"""
+    if isinstance(x, (tuple, list)):
+        return x[-1]
+    return x
 
 def format_answer(payload: dict) -> str:
     res = payload["result"]
@@ -555,6 +609,7 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.cfg = cfg_mod.load()
+        apply_theme(self.cfg.get("theme", "dark"))
         self.q: queue.Queue = queue.Queue()
         self.busy = False
         self._anim = 0
@@ -571,6 +626,12 @@ class App:
         self.last_problem = ""
         self.cont_qno = None
         self._pulse_job = None
+        # 多题连答 / 托盘 / 更新状态
+        self.multi_items = []
+        self.multi_idx = 0
+        self.tray = None
+        self.hidden = False
+        self.update_info = None
 
         capture.enable_dpi_awareness()
         self._init_window()
@@ -584,6 +645,9 @@ class App:
         self.root.after(700, lambda: snap_bottom_right(self.root))
         # 被最小化 / Win+D 之后再恢复时，重新贴回右下角
         self.root.bind("<Map>", self._on_map)
+        self.root.after(1200, self._setup_tray)
+        if self.cfg.get("check_update", True):
+            self.root.after(2600, self.check_update_async)
 
         if not self.cfg.get("api_key"):
             self.set_status("⚠ 还没填 API Key —— 点右上角 ⚙")
@@ -593,12 +657,38 @@ class App:
     # ------------------------------------------------------------ 窗口
     def _init_window(self):
         root = self.root
-        root.title(APP_TITLE)
+        root.title(f"{APP_TITLE}")
         root.configure(bg=UI["bg"])
+        # 字号缩放：只影响正文和答案（其它控件位置是按 100% 摆的，缩放太大会挤）
+        try:
+            self.font_scale = max(80, min(160, int(self.cfg.get("font_scale", 100)))) / 100.0
+        except Exception:  # noqa: BLE001
+            self.font_scale = 1.0
         place_bottom_right(root, 474, 700)
+        pos = str(self.cfg.get("last_pos") or "")
+        if self.cfg.get("remember_pos") and re.match(r"^\d+x\d+[+-]\d+[+-]\d+$", pos):
+            try:
+                root.geometry(pos)
+            except Exception:  # noqa: BLE001
+                pass
         root.minsize(430, 540)
         self.topmost = bool(self.cfg.get("always_on_top", True))
         root.attributes("-topmost", self.topmost)
+        self.apply_opacity(self.cfg.get("opacity", 100), save=False)
+
+    def apply_opacity(self, value, save: bool = True):
+        """窗口不透明度 60~100（太透明会看不清答案，所以有下限）。"""
+        try:
+            pct = max(60, min(100, int(float(value))))
+        except Exception:  # noqa: BLE001
+            pct = 100
+        try:
+            self.root.attributes("-alpha", pct / 100.0)
+        except Exception:  # noqa: BLE001
+            pass
+        if save:
+            self.cfg["opacity"] = pct
+            cfg_mod.save(self.cfg)
 
     def _on_map(self, _ev=None):
         """窗口从最小化恢复（或 Win+D 后恢复）时，再贴一次右下角。"""
@@ -653,8 +743,9 @@ class App:
         inner = tk.Frame(card, bg=UI["card"])
         inner.pack(side="left", fill="both", expand=True, padx=(13, 15), pady=14)
         self.ans = tk.Label(inner, text="按 Ctrl+Alt+Q 圈住题目", bg=UI["card"],
-                            fg=UI["dim"], font=(FONT, 16, "bold"), justify="left",
-                            anchor="w", wraplength=380)
+                            fg=UI["dim"],
+                            font=(FONT, max(11, round(16 * self.font_scale)), "bold"),
+                            justify="left", anchor="w", wraplength=380)
         self.ans.pack(fill="x")
         chips = tk.Frame(inner, bg=UI["card"])
         chips.pack(fill="x", pady=(9, 0))
@@ -711,7 +802,8 @@ class App:
         self.text = tk.Text(det, wrap="word", bg=UI["card2"], fg=UI["text"],
                             insertbackground=UI["text"], relief="flat", bd=0,
                             highlightthickness=0, cursor="arrow", height=8,
-                            font=(FONT, int(self.cfg.get("font_size", 11))),
+                            font=(FONT, max(8, round(int(self.cfg.get("font_size", 11))
+                                                     * self.font_scale))),
                             padx=14, pady=12, spacing1=2, spacing3=3)
         sb = tk.Scrollbar(det, command=self.text.yview, width=9, bg=UI["card2"],
                           troughcolor=UI["card2"], activebackground=UI["border"],
@@ -719,7 +811,8 @@ class App:
         self.text.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.text.pack(side="left", fill="both", expand=True)
-        self.text.tag_configure("answer", font=(FONT, 14, "bold"),
+        self.text.tag_configure("answer",
+                                font=(FONT, max(10, round(14 * self.font_scale)), "bold"),
                                 foreground=UI["green"], spacing1=3, spacing3=6)
         self.text.tag_configure("muted", foreground=UI["dim"])
         self.text.tag_configure("warn", foreground=UI["amber"])
@@ -738,12 +831,15 @@ class App:
         self.b_full.pack(side="left", padx=(7, 0))
         self.b_paste = Pill(bar, "粘贴", self.paste_image, kind="ghost", width=64)
         self.b_paste.pack(side="left", padx=(7, 0))
-        self.b_redo = Pill(bar, "重算", self.redo, kind="ghost", width=60)
-        self.b_redo.pack(side="left", padx=(7, 0))
-        self.b_redo.set_enabled(False)
         self.b_copy = Pill(bar, "复制答案", self.copy_answer, kind="ghost", width=84)
         self.b_copy.pack(side="right")
         self.b_copy.set_enabled(False)
+        self.b_steps = Pill(bar, "步骤", self.copy_steps, kind="ghost", width=52)
+        self.b_steps.pack(side="right", padx=(0, 7))
+        self.b_steps.set_enabled(False)
+        self.b_bad = Pill(bar, "错了", self.mark_error, kind="ghost", width=52)
+        self.b_bad.pack(side="right", padx=(0, 7))
+        self.b_bad.set_enabled(False)
 
         # 一屏多题时，这里会冒出「复制第 N 题」按钮；空的时候不占高度
         self.multi_bar = tk.Frame(wrap, bg=bg)
@@ -765,8 +861,14 @@ class App:
         self.interval_lbl = tk.Label(bar2, text=f"每 {self.cfg.get('interval', 3)} 秒",
                                      bg=bg, fg=UI["muted"], font=(FONT, 9),
                                      cursor="hand2")
-        self.interval_lbl.pack(side="right")
+        self.interval_lbl.pack(side="left", padx=(10, 0))
         self.interval_lbl.bind("<Button-1>", lambda e: self.open_settings())
+        # 右侧：历史面板 / 重算（把这两个从主按钮行挪出来，主行才不会挤爆）
+        self.b_redo = Pill(bar2, "重算", self.redo, kind="ghost", width=58)
+        self.b_redo.pack(side="right")
+        self.b_redo.set_enabled(False)
+        self.b_hist = Pill(bar2, "历史", self.open_history, kind="ghost", width=54)
+        self.b_hist.pack(side="right", padx=(0, 7))
 
         # ---- 状态栏
         st = tk.Frame(self.root, bg=UI["card2"])
@@ -1003,7 +1105,9 @@ class App:
     def _current_cfg(self):
         cfg = dict(self.cfg)
         cfg["reader_order"] = READER_LABELS.get(self.reader_var.get(),
-                                                ["modlens", "winocr"])
+                                                ["winocr", "modlens"])
+        if cfg.get("vision_first"):
+            cfg["reader_order"] = ["modlens", "winocr"]
         cfg["model"] = MODEL_LABEL2ID.get(self.model_var.get(), "deepseek-chat")
         cfg["samples"] = int(self.samples_var.get())
         cfg["verify"] = bool(self.verify_var.get())
@@ -1016,6 +1120,12 @@ class App:
     def _set_buttons(self, enabled: bool):
         for b in (self.b_region, self.b_full, self.b_paste):
             b.set_enabled(enabled)
+        if not enabled:
+            for b in (self.b_copy, self.b_steps, self.b_bad, self.b_redo):
+                try:
+                    b.set_enabled(False)
+                except Exception:  # noqa: BLE001
+                    pass
 
     # ------------------------------------------------------------ 连续模式
     def _region_text(self):
@@ -1259,6 +1369,8 @@ class App:
                         self.redo()
                     elif name == "paste":
                         self.paste_image()
+                    elif name == "next":
+                        self.next_answer()
             except queue.Empty:
                 pass
             except Exception:  # noqa: BLE001
@@ -1282,6 +1394,9 @@ class App:
             # Ctrl+Alt+V：直接作答剪贴板里的图（截图工具存到剪贴板时，不用再框选）
             self.hk.add("paste", self.cfg.get("hotkey_paste", "ctrl+alt+v"),
                         ["ctrl+shift+v", "ctrl+alt+b"])
+            # Ctrl+Alt+N：一屏多题时切到下一题的答案
+            self.hk.add("next", self.cfg.get("hotkey_next", "ctrl+alt+n"),
+                        ["ctrl+shift+n", "ctrl+alt+m"])
             if not self.hk.start():
                 self.log(f"⚠ 全局热键不可用：{self.hk.error}（按钮仍可用）")
             elif getattr(self.hk, "failed", None):
@@ -1364,6 +1479,10 @@ class App:
         self.b_copy.set_enabled(True)
         self.b_redo.set_enabled(True)
         items = payload.get("items") or [res]
+        self.multi_items = items
+        self.multi_idx = 0
+        self.b_steps.set_enabled(bool(res.reasoning))
+        self.b_bad.set_enabled(True)
         label, key = CONF_CHIP.get(res.confidence, ("⚪ " + res.confidence, "muted"))
         head = res.answer
         if len(items) > 1:
@@ -1381,6 +1500,9 @@ class App:
             bits.insert(0, f"共 {len(items)} 题")
         if getattr(res, "r1", False):
             bits.insert(0, "R1 复核")
+        if getattr(res, "dual", False):
+            agree = "一致" in (getattr(res, "dual_note", "") or "")
+            bits.insert(0, "双模型" + ("✓" if agree else "✗"))
         if payload.get("cached"):
             bits.insert(0, "⚡ 缓存")
         self.meta.configure(text=" · ".join(bits))
@@ -1431,6 +1553,13 @@ class App:
         if (copied and self.cfg.get("refocus", True) and not self.cont_on
                 and self.prev_hwnd):
             self.root.after(90, lambda: capture.restore_focus(self.prev_hwnd))
+        # 自动粘贴：把答案直接敲进刚才那个输入框（可选再回车提交）
+        if copied and self.cfg.get("auto_paste") and not self.cont_on and to_copy:
+            hwnd = self.prev_hwnd
+            enter = bool(self.cfg.get("auto_enter"))
+            if hwnd:
+                self.root.after(130, lambda: capture.restore_focus(hwnd))
+            self.root.after(330, lambda: capture.send_paste(enter=enter))
         tail = "  ·  📋 已自动复制" if copied else ""
         qno = qsplit.question_number(payload.get("text") or "")
         qtag = (f"第 {qno[0]}/{qno[1]} 题 · " if qno and qno[1]
@@ -1444,6 +1573,22 @@ class App:
                 f"reader={payload.get('backend', '')} "
                 f"model={MODEL_LABEL2ID.get(self.model_var.get(), 'deepseek-chat')}"
                 f" conf={res.confidence}")
+        except Exception:  # noqa: BLE001
+            pass
+        # 历史面板 / CSV 用的结构化记录
+        try:
+            qn2 = qsplit.question_number(payload.get("text") or "")
+            cfg_mod.add_record({
+                "title": (f"第{qn2[0]}/{qn2[1]}题" if qn2 and qn2[1]
+                          else (f"第{qn2[0]}题" if qn2 else "题目")),
+                "answer": res.answer, "fill": res.fill,
+                "confidence": res.confidence, "model": self.cfg.get("model", ""),
+                "elapsed": round(float(payload.get("elapsed", 0)), 2),
+                "calls": sum(i.calls for i in items),
+                "backend": payload.get("backend", ""),
+                "cached": bool(payload.get("cached")),
+                "question": (payload.get("text") or "")[:800],
+            })
         except Exception:  # noqa: BLE001
             pass
 
@@ -1485,21 +1630,52 @@ class App:
         self._run_path(self.last_image, bypass=True)
 
     def _render_multi(self, items):
-        """一屏多题时，给每题一个「复制」按钮（最多 8 题）。"""
+        """一屏多题时，给每题一个「复制」按钮（最多 8 题）+ 一个「下一题」。"""
         try:
             for w in self.multi_bar.winfo_children():
                 w.destroy()
             if len(items) < 2:
                 return
+            Pill(self.multi_bar, "下一题 ▶", self.next_answer, kind="flat",
+                 height=28, padx=12, font_size=9).pack(side="right")
             for i, r in enumerate(items[:8], 1):
+                r = _item_res(r)
                 val = r.fill or r.answer
                 label = f"{i}·{val[:9]}"
                 Pill(self.multi_bar, label,
-                     (lambda v=val: self._copy_text(v)),
+                     (lambda v=val, idx=i: self._copy_index(idx, v)),
                      kind="flat", height=28, padx=12, font_size=9
                      ).pack(side="left", padx=(0, 6))
         except Exception:  # noqa: BLE001
             pass
+
+    def _copy_index(self, idx: int, value: str):
+        """点某一题的按钮：复制它，并把它记为"当前第几题"。"""
+        self.multi_idx = max(0, int(idx) - 1)
+        if self._copy_text(value):
+            try:
+                self.set_status(f"第 {idx} 题答案已复制")
+            except Exception:  # noqa: BLE001
+                pass
+
+    def next_answer(self):
+        """多题连答：切到下一题的答案（Ctrl+Alt+N 或点「下一题」）。"""
+        items = self.multi_items or []
+        if len(items) < 2:
+            self.set_status("这一屏只有一道题，不需要下一题")
+            return
+        self.multi_idx = (self.multi_idx + 1) % len(items)
+        r = _item_res(items[self.multi_idx])
+        val = r.fill or r.answer
+        if self._copy_text(val):
+            self.set_status(f"第 {self.multi_idx + 1}/{len(items)} 题答案已复制")
+            self._flash(UI["accent"])
+            self._beep("done")
+            if self.cfg.get("auto_paste") and self.prev_hwnd:
+                hwnd = self.prev_hwnd
+                enter = bool(self.cfg.get("auto_enter"))
+                self.root.after(80, lambda: capture.restore_focus(hwnd))
+                self.root.after(240, lambda: capture.send_paste(enter=enter))
 
     def _remember(self, label: str, value: str):
         """记一条最近的答案（内存里留 6 条，够考试里来回翻）。"""
@@ -1563,6 +1739,198 @@ class App:
         if ok:
             self._copy_flash()
 
+    def copy_steps(self):
+        """只复制推理步骤（对答案要做人工核对时用）。"""
+        if not self.last_payload:
+            return
+        res = self.last_payload["result"]
+        body = pretty_reasoning(res.reasoning or "").strip()
+        if not body:
+            self.set_status("这次没有推理内容可复制")
+            return
+        head = ""
+        try:
+            head = f"题目：\n{(self.last_payload.get('text') or '')[:600]}\n\n"
+        except Exception:  # noqa: BLE001
+            head = ""
+        ok = self._copy_text(head + "解题步骤：\n" + body)
+        if ok:
+            self.set_status("解题步骤已复制")
+
+    def mark_error(self):
+        """把当前这题标记为"答错了"：下次遇到同一题自动多问两路。"""
+        if not self.last_payload:
+            return
+        payload = self.last_payload
+        res = payload.get("result")
+        key = payload.get("key") or _cache_key(payload.get("text") or "", self.cfg)
+        try:
+            total = cfg_mod.add_error(key, payload.get("text") or "",
+                                      (res.fill or res.answer) if res else "")
+            self.set_status(f"已记入错题本（共 {total} 题）· 下次遇到会多问 2 路")
+            self._beep("warn")
+        except Exception as exc:  # noqa: BLE001
+            self.set_status(f"记录失败：{exc}")
+
+    # ------------------------------------------------------------ 历史 / 更新
+    def open_history(self):
+        """历史面板：最近做过的题（可导出 CSV 复习）。"""
+        win = tk.Toplevel(self.root)
+        win.title("做题历史")
+        win.configure(bg=UI["bg"])
+        apply_icon(win)
+        win.geometry("760x460")
+        try:
+            from tkinter import ttk
+        except Exception:  # noqa: BLE001
+            return
+
+        style = ttk.Style(win)
+        try:
+            style.theme_use("clam")
+        except Exception:  # noqa: BLE001
+            pass
+        style.configure("SQA.Treeview", background=UI["card"], fieldbackground=UI["card"],
+                        foreground=UI["text"], borderwidth=0, rowheight=26,
+                        font=(FONT, 9))
+        style.configure("SQA.Treeview.Heading", background=UI["card2"],
+                        foreground=UI["dim"], font=(FONT, 9, "bold"))
+        style.map("SQA.Treeview", background=[("selected", UI["accent"])])
+
+        cols = ("ts", "answer", "fill", "confidence", "elapsed", "model")
+        heads = {"ts": "时间", "answer": "答案", "fill": "填入",
+                 "confidence": "置信度", "elapsed": "耗时", "model": "模型"}
+        widths = {"ts": 140, "answer": 260, "fill": 120, "confidence": 70,
+                  "elapsed": 60, "model": 120}
+        frame = tk.Frame(win, bg=UI["bg"])
+        frame.pack(fill="both", expand=True, padx=12, pady=(12, 0))
+        tree = ttk.Treeview(frame, columns=cols, show="headings",
+                            style="SQA.Treeview")
+        for c in cols:
+            tree.heading(c, text=heads[c])
+            tree.column(c, width=widths[c], anchor="w")
+        sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
+
+        def reload():
+            for iid in tree.get_children():
+                tree.delete(iid)
+            for r in cfg_mod.load_records(limit=500):
+                tree.insert("", "end", values=(
+                    r.get("ts", ""), (r.get("answer") or "")[:80],
+                    (r.get("fill") or "")[:40], r.get("confidence", ""),
+                    r.get("elapsed", ""), r.get("model", "")))
+        reload()
+
+        barw = tk.Frame(win, bg=UI["bg"])
+        barw.pack(fill="x", padx=12, pady=10)
+        stat = tk.Label(barw, text=f"共 {len(tree.get_children())} 条",
+                        bg=UI["bg"], fg=UI["muted"], font=(FONT, 9))
+        stat.pack(side="left")
+
+        def do_export():
+            name = f"screenqa-history-{time.strftime('%Y%m%d-%H%M%S')}.csv"
+            target = ROOT / name
+            n = cfg_mod.export_records_csv(target)
+            if n:
+                messagebox.showinfo("导出完成", f"已导出 {n} 条到：\n{target}")
+                self.set_status(f"已导出 {n} 条历史 → {name}")
+            else:
+                messagebox.showwarning("导出失败", f"没有导出成功：\n{target}")
+
+        def do_copy():
+            sel = tree.selection()
+            if not sel:
+                return
+            vals = tree.item(sel[0], "values")
+            if vals and self._copy_text(str(vals[2] or vals[1])):
+                self.set_status("已复制选中那条的答案")
+
+        Pill(barw, "导出 CSV", do_export, kind="primary", height=30, padx=14,
+             font_size=9, bg=UI["bg"]).pack(side="right")
+        Pill(barw, "复制选中", do_copy, kind="ghost", height=30, padx=14,
+             font_size=9, bg=UI["bg"]).pack(side="right", padx=(0, 8))
+        Pill(barw, "刷新", reload, kind="ghost", height=30, padx=14,
+             font_size=9, bg=UI["bg"]).pack(side="right", padx=(0, 8))
+
+    def check_update_async(self):
+        def worker():
+            info = extras.check_update()
+            def show():
+                self.update_info = info
+                if info.get("ok") and info.get("behind"):
+                    self.log(f"⬆ 有新版本 {info.get('latest')}（{info.get('message', '')[:40]}）")
+                    try:
+                        self.set_status(f"有新版本 {info.get('latest')} · "
+                                        f"⚙ 里可查看")
+                    except Exception:  # noqa: BLE001
+                        pass
+                elif info.get("ok"):
+                    self.log(f"已是最新版本（{info.get('latest')}）")
+            self.root.after(0, show)
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ------------------------------------------------------------ 托盘
+    def _setup_tray(self):
+        self.tray_ok = False
+        if not self.cfg.get("tray", True):
+            return
+        try:
+            icon = ROOT / "assets" / "app.ico"
+            if not icon.is_file():
+                icon = ROOT / "assets" / "icon-64.png"
+            self.tray = extras.TrayIcon(
+                icon, f"{APP_TITLE}（左键显示/隐藏）",
+                on_left=lambda: self.root.after(0, self.toggle_show),
+                on_menu=lambda cid: self.root.after(0, lambda: self._on_tray_menu(cid)),
+            )
+            self.tray.start()
+            if self.tray.ready.wait(3.0):
+                if self.tray.error:
+                    self.tray_ok = False
+                    self.log(f"⚠ 托盘图标建不上：{self.tray.error} —— "
+                             f"关窗口就是真退出（热键仍然可用）")
+                    self.set_status("⚠ 托盘不可用 · 关窗口会退出程序")
+                else:
+                    self.tray_ok = True
+                    self.log("托盘图标已就绪（左键显示/隐藏，右键菜单）")
+        except Exception as exc:  # noqa: BLE001
+            self.tray_ok = False
+            self.log(f"⚠ 托盘初始化失败：{exc}")
+
+    def toggle_show(self):
+        """左右键都能用：隐藏 ↔ 显示（隐藏后热键照常工作）。"""
+        try:
+            if self.hidden:
+                self.root.deiconify()
+                self.root.attributes("-topmost", self.topmost)
+                self.root.after(80, lambda: snap_bottom_right(self.root))
+                self.hidden = False
+                self.set_status("窗口已显示")
+            else:
+                self.root.withdraw()
+                self.hidden = True
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_tray_menu(self, cid: int):
+        if cid == 1:
+            self.toggle_show()
+        elif cid == 2:
+            self.open_settings()
+        elif cid == 3:
+            self._quit()
+
+    def _quit(self):
+        self.cfg["tray"] = False
+        try:
+            cfg_mod.save(self.cfg)
+        except Exception:  # noqa: BLE001
+            pass
+        self._on_close()
+
     def clear(self):
         self.text.delete("1.0", "end")
         self.ans.configure(text="按 Ctrl+Alt+Q 圈住题目", fg=UI["dim"])
@@ -1570,6 +1938,14 @@ class App:
         self.edge.configure(bg=UI["accent"])
         self.meta.configure(text="")
         self.b_copy.set_enabled(False)
+        self.b_redo.set_enabled(False)
+        self.multi_items = []
+        self.multi_idx = 0
+        try:
+            self.b_steps.set_enabled(False)
+            self.b_bad.set_enabled(False)
+        except Exception:  # noqa: BLE001
+            pass
         self.set_status("就绪")
 
     # ------------------------------------------------------------ 设置
@@ -1589,7 +1965,7 @@ class App:
         frm = tk.Frame(win, bg=bg)
         frm.pack(fill="both", expand=True, padx=18, pady=16)
         win.update_idletasks()
-        w, h = 560, 560
+        w, h = 640, 690
         px = self.root.winfo_rootx() + self.root.winfo_width() - w
         py = self.root.winfo_rooty() + self.root.winfo_height() - h
         win.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
@@ -1660,8 +2036,65 @@ class App:
                            font=(FONT, 9)).grid(row=i // 3, column=i % 3,
                                                 sticky="w", padx=(0, 16), pady=2)
 
+        # ---- v2.4 新增开关（自动粘贴 / 双模型互检 / 几何图模式 / 托盘 / 自启 …）
+        paste_var = tk.BooleanVar(value=bool(self.cfg.get("auto_paste", False)))
+        enter_var = tk.BooleanVar(value=bool(self.cfg.get("auto_enter", False)))
+        dual_var = tk.BooleanVar(value=bool(self.cfg.get("dual", False)))
+        geom_var = tk.BooleanVar(value=bool(self.cfg.get("vision_first", False)))
+        pos_var = tk.BooleanVar(value=bool(self.cfg.get("remember_pos", False)))
+        tray_var = tk.BooleanVar(value=bool(self.cfg.get("tray", True)))
+        boot_var = tk.BooleanVar(value=bool(self.cfg.get("autostart", False)))
+        upd_var = tk.BooleanVar(value=bool(self.cfg.get("check_update", True)))
+        checks2 = tk.Frame(frm, bg=bg)
+        checks2.grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        for i, (text, var) in enumerate((("答完自动粘贴", paste_var),
+                                        ("再按回车提交", enter_var),
+                                        ("双模型互检", dual_var),
+                                        ("几何图模式", geom_var),
+                                        ("记住窗口位置", pos_var),
+                                        ("关窗缩到托盘", tray_var),
+                                        ("开机自启", boot_var),
+                                        ("启动查更新", upd_var))):
+            tk.Checkbutton(checks2, text=text, variable=var, bg=bg, fg=UI["dim"],
+                           selectcolor=card, activebackground=bg,
+                           activeforeground=UI["text"], bd=0, highlightthickness=0,
+                           font=(FONT, 9)).grid(row=i // 4, column=i % 4,
+                                                sticky="w", padx=(0, 12), pady=2)
+
+        # ---- 外观：主题 / 字号 / 不透明度
+        look = tk.Frame(frm, bg=bg)
+        look.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        tk.Label(look, text="主题", bg=bg, fg=UI["dim"], font=(FONT, 9)).pack(side="left")
+        theme_var = tk.StringVar(value="浅色" if self.cfg.get("theme") == "light" else "深色")
+        theme_box = tk.OptionMenu(look, theme_var, "深色", "浅色")
+        theme_box.configure(bg=card, fg=UI["text"], activebackground=card2,
+                            activeforeground=UI["text"], highlightthickness=1,
+                            highlightbackground=UI["border"], bd=0, font=(FONT, 9),
+                            width=5, anchor="w")
+        theme_box["menu"].configure(bg=card, fg=UI["text"],
+                                    activebackground=UI["accent"],
+                                    activeforeground="#ffffff", font=(FONT, 9))
+        theme_box.pack(side="left", padx=(6, 14))
+        tk.Label(look, text="字号 %", bg=bg, fg=UI["dim"], font=(FONT, 9)).pack(side="left")
+        scale_var = tk.StringVar(value=str(self.cfg.get("font_scale", 100)))
+        tk.Spinbox(look, from_=80, to=160, increment=10, width=5,
+                   textvariable=scale_var, bg=card, fg=UI["text"],
+                   insertbackground=UI["text"], relief="flat", bd=0,
+                   buttonbackground=card2, highlightthickness=1,
+                   highlightbackground=UI["border"], font=(FONT, 9)
+                   ).pack(side="left", padx=(6, 14))
+        tk.Label(look, text="不透明度 %", bg=bg, fg=UI["dim"],
+                 font=(FONT, 9)).pack(side="left")
+        op_var = tk.StringVar(value=str(self.cfg.get("opacity", 100)))
+        tk.Spinbox(look, from_=60, to=100, increment=5, width=5,
+                   textvariable=op_var, bg=card, fg=UI["text"],
+                   insertbackground=UI["text"], relief="flat", bd=0,
+                   buttonbackground=card2, highlightthickness=1,
+                   highlightbackground=UI["border"], font=(FONT, 9)
+                   ).pack(side="left", padx=(6, 0))
+
         row6 = tk.Frame(frm, bg=bg)
-        row6.grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        row6.grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
         tk.Label(row6, text=self._region_text(), bg=bg, fg=UI["muted"],
                  font=(FONT, 9)).pack(side="left")
         Pill(row6, "清空缓存", (lambda: msg.configure(
@@ -1763,12 +2196,43 @@ class App:
         Pill(row6, "视觉自检", vision_selftest, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
 
+        def do_update():
+            msg.configure(text="正在检查 GitHub 上的新版本…")
+
+            def worker():
+                info = extras.check_update()
+                def show():
+                    if not info.get("ok"):
+                        msg.configure(text=f"检查失败：{info.get('error', '')[:80]}")
+                        messagebox.showwarning("检查更新", f"没能连上 GitHub：\n"
+                                                          f"{info.get('error', '')}")
+                        return
+                    latest = info.get("latest", "")
+                    if info.get("behind"):
+                        body = (f"本地版本 {APP_VERSION}\nGitHub 最新 {latest}\n\n"
+                                f"最新提交：{info.get('message', '')}\n\n"
+                                f"升级方式：git pull，或用 npx 重装技能；\n"
+                                f"exe 用户重新下载发布包即可。\n{info.get('url', '')}")
+                        msg.configure(text=f"有新版本 {latest}")
+                        messagebox.showinfo("发现新版本", body)
+                    else:
+                        msg.configure(text=f"已是最新（{latest}）")
+                        messagebox.showinfo("检查更新", f"已是最新版本（{latest}）")
+                self.root.after(0, show)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        Pill(row6, "检查更新", do_update, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row6, "历史", self.open_history, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+
         msg = tk.Label(frm, text="Key 获取：platform.deepseek.com → API keys",
                        bg=bg, fg=UI["muted"], font=(FONT, 9))
-        msg.grid(row=7, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        msg.grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         btns = tk.Frame(frm, bg=bg)
-        btns.grid(row=8, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        btns.grid(row=10, column=0, columnspan=2, sticky="e", pady=(14, 0))
 
         def save():
             self.cfg["api_key"] = vars_["api_key"].get().strip()
@@ -1790,6 +2254,29 @@ class App:
             self.cfg["refocus"] = bool(refocus_var.get())
             self.cfg["fast"] = bool(fast_var.get())
             self.cfg["reasoner"] = bool(r1_var.get())
+            self.cfg["auto_paste"] = bool(paste_var.get())
+            self.cfg["auto_enter"] = bool(enter_var.get())
+            self.cfg["dual"] = bool(dual_var.get())
+            self.cfg["vision_first"] = bool(geom_var.get())
+            self.cfg["remember_pos"] = bool(pos_var.get())
+            self.cfg["tray"] = bool(tray_var.get())
+            self.cfg["check_update"] = bool(upd_var.get())
+            self.cfg["theme"] = "light" if theme_var.get() == "浅色" else "dark"
+            try:
+                self.cfg["font_scale"] = max(80, min(160, int(float(scale_var.get()))))
+            except Exception:  # noqa: BLE001
+                self.cfg["font_scale"] = 100
+            self.cfg["opacity"] = max(60, min(100, int(float(op_var.get() or 100))))
+            # 开机自启：写注册表（失败也不拦着保存设置，只是提示）
+            want_boot = bool(boot_var.get())
+            if want_boot != bool(self.cfg.get("autostart", False)):
+                ok = extras.set_autostart(want_boot)
+                self.cfg["autostart"] = want_boot if ok else extras.autostart_enabled()
+                if not ok:
+                    messagebox.showwarning(
+                        "开机自启", "写注册表被拒绝（可能被安全软件拦了）。\n"
+                                   "可以手动把快捷方式放进「启动」文件夹。")
+            # 托盘开关只在下次启动生效（托盘线程已经起来了）
             self.cfg["ocr_quality"] = (
                 "high" if qual_var.get().startswith("高精度") else "standard")
             cfg_mod.save(self.cfg)
@@ -1800,7 +2287,11 @@ class App:
                 pass
             self.lbl_pin.configure(fg=UI["accent"] if self.topmost else UI["muted"])
             self.interval_lbl.configure(text=f"每 {self.cfg['interval']} 秒")
-            self.set_status("设置已保存")
+            self.apply_opacity(self.cfg.get("opacity", 100), save=False)
+            self.font_scale = max(80, min(160, int(self.cfg.get("font_scale", 100)))) / 100.0
+            self.set_status("设置已保存" +
+                            ("（主题/字号改完，重开窗口生效）"
+                             if self.cfg.get("theme") or True else ""))
             win.destroy()
 
         Pill(btns, "保存", save, kind="primary", bold=True, width=88, bg=bg).pack(side="right")
@@ -1815,16 +2306,42 @@ class App:
             pass
 
     def _on_close(self):
+        # 关窗口 = 缩到托盘（考试中手滑点 X 不会把程序关掉）；托盘菜单「退出」才真退出
+        if (self.cfg.get("tray", True) and self.tray is not None
+                and getattr(self, "tray_ok", False)):
+            try:
+                self.root.withdraw()
+                self.hidden = True
+                self.set_status("已缩到托盘 · 左键托盘图标可召回")
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            if self.cfg.get("remember_pos"):
+                self.cfg["last_pos"] = self.root.geometry()
+                cfg_mod.save(self.cfg)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             self.stop_evt.set()
         except Exception:  # noqa: BLE001
             pass
         if self.hk:
             self.hk.stop()
+        if self.tray is not None:
+            try:
+                self.tray.stop()
+            except Exception:  # noqa: BLE001
+                pass
         self.root.destroy()
 
 
 def main():
+    try:  # 必须在 tk.Tk() 之前：否则 Tk 用虚拟化坐标，窗口贴不到右下角
+        import capture as _cap
+        _cap.enable_dpi_awareness()
+    except Exception:  # noqa: BLE001
+        pass
     ensure_bundled_files()
     ap = argparse.ArgumentParser(description="屏幕问答助手")
     ap.add_argument("--cli", action="store_true", help="无界面模式，截全屏并作答")

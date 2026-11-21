@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from typing import Optional
 
 from PIL import Image, ImageGrab
@@ -205,4 +206,48 @@ def restore_focus(hwnd: int) -> bool:
                 u.AttachThreadInput(cur_tid, target_tid, False)
         return int(u.GetForegroundWindow()) == hwnd
     except Exception:  # noqa: BLE001
+        return False
+
+
+# ---------------------------------------------------------------- 键盘注入
+_VK_CONTROL = 0x11
+_VK_V = 0x56
+_VK_RETURN = 0x0D
+_KEYEVENTF_KEYUP = 0x0002
+_INPUT_INJECTED = None
+
+
+def _tap(vk: int, hold: float = 0.03) -> None:
+    u = ctypes.windll.user32
+    u.keybd_event(vk, 0, 0, 0)
+    time.sleep(hold)
+    u.keybd_event(vk, 0, _KEYEVENTF_KEYUP, 0)
+
+
+def send_paste(enter: bool = False, settle: float = 0.12) -> bool:
+    """在当前前台窗口按一次 Ctrl+V（可选再回车）。
+
+    用途：答完之后直接把答案填进 MyMathLab / Canvas 的输入框，
+    省掉「手动切窗口 + Ctrl+V」这一步。注入失败（例如宿主禁止合成按键）
+    只返回 False，绝不抛异常。
+    """
+    global _INPUT_INJECTED
+    u = ctypes.windll.user32
+    try:
+        time.sleep(max(0.0, settle))
+        u.keybd_event(_VK_CONTROL, 0, 0, 0)
+        time.sleep(0.02)
+        u.keybd_event(_VK_V, 0, 0, 0)
+        time.sleep(0.03)
+        u.keybd_event(_VK_V, 0, _KEYEVENTF_KEYUP, 0)
+        time.sleep(0.02)
+        u.keybd_event(_VK_CONTROL, 0, _KEYEVENTF_KEYUP, 0)
+        ok = True
+        if enter:
+            time.sleep(0.25)
+            _tap(_VK_RETURN)
+        _INPUT_INJECTED = ok
+        return ok
+    except Exception:  # noqa: BLE001
+        _INPUT_INJECTED = False
         return False

@@ -148,6 +148,8 @@ class SolveResult:
     elapsed: float = 0.0
     calls: int = 0
     r1: bool = False               # 是否经过 deepseek-reasoner 复核
+    dual: bool = False             # 是否做过「双模型互检」
+    dual_note: str = ""            # 互检结论（一致 / 不一致改判 …）
     error: str = ""
     warnings: list[str] = field(default_factory=list)
 
@@ -163,6 +165,7 @@ class Solver:
         escalate: bool = True,
         escalate_extra: int = 2,
         reasoner: str = "",
+        dual: bool = False,
     ):
         self.client = client
         self.samples = max(1, int(samples))
@@ -174,6 +177,8 @@ class Solver:
         self.escalate_extra = max(1, int(escalate_extra))
         # 低置信度时用更强推理模型复核一次（空字符串 = 不复核）
         self.reasoner = (reasoner or "").strip()
+        # 双模型互检：不管置信度，始终让 R1 独立算一遍，两条链路一致才给🟢
+        self.dual = bool(dual) and bool(self.reasoner)
 
     # ------------------------------------------------------------------
     def _collect(self, messages, n: int, res: SolveResult, start: int = 0):
@@ -349,9 +354,68 @@ class Solver:
         if res.error and res.confidence == "高":
             res.confidence = "中"
 
+        # 4a) 双模型互检：不管置信度，让 R1 完全独立算一遍
+        #     两条链路一致 → 才敢给"高"；不一致 → 追加采样打破平票，仍不一致就降"存疑"
+        if (self.dual and res.answer and "调用失败" not in res.answer
+                and res.confidence in ("高", "中")):
+            self.progress("双模型互检中（R1 独立再算一遍，约 10-40 秒）…")
+            try:
+                dmsg = [
+                    {"role": "system", "content": FEISHU_SYSTEM},
+                    {"role": "user", "content": (
+                        f"【题目】\n{question_text}\n\n"
+                        "请独立作答。不要假设任何已有答案是对的，"
+                        "一步步自己算，然后按格式给出最终答案。"
+                    )},
+                ]
+                dout = self.client.chat(dmsg, temperature=0.0,
+                                        max_tokens=3072, model=self.reasoner)
+                res.calls += 1
+                res.dual = True
+                dans = extract_answer(dout)
+                if dans and "失败" not in dans:
+                    dkey = key_of(dans)
+                    if dkey == best_key:
+                        res.dual_note = f"双模型一致（{res.answer}）"
+                        if res.agreement >= 0.999:
+                            res.confidence = "高"
+                    else:
+                        res.dual_note = f"双模型不一致：投票 {res.answer} / R1 {dans}"
+                        res.warnings.append(res.dual_note)
+                        self.progress("两个模型结论不一致，追加采样再投票…")
+                        more_a, more_d, _ = self._collect(
+                            messages, self.escalate_extra, res,
+                            start=len(res.samples))
+                        res.samples = list(res.samples) + more_a
+                        res.sample_details = list(res.sample_details) + more_d
+                        votes2: dict[str, int] = {}
+                        for a in res.samples:
+                            k = key_of(a)
+                            votes2[k] = votes2.get(k, 0) + 1
+                        res.votes = votes2
+                        best2 = max(votes2, key=lambda k: votes2[k]) if votes2 else ""
+                        res.agreement = (votes2.get(best2, 0) / len(res.samples)
+                                         if res.samples else 0.0)
+                        if best2 == dkey:
+                            res.answer = dans
+                            res.reasoning = dout
+                            res.confidence = "中"
+                            res.verified = True
+                        else:
+                            res.answer = next(
+                                (a for a in res.samples if key_of(a) == best2),
+                                res.answer)
+                            res.confidence = "存疑"
+                            res.warnings.append(
+                                "补充采样后仍与 R1 不一致 → 置信度降为存疑，请人工核对")
+                        res.fill = (extract_fill(res.reasoning) or res.fill
+                                    or clean_fill(res.answer))
+            except Exception as exc:  # noqa: BLE001
+                res.warnings.append(f"双模型互检失败：{exc}")
+
         # 4b) 低置信度 → 换 deepseek-reasoner 复核一次
         #     为什么只在"中/存疑"时用：R1 一次要 10-40 秒，🟢高的题没必要多花钱
-        if (self.reasoner and res.confidence in ("中", "存疑")
+        if (self.reasoner and not res.dual and res.confidence in ("中", "存疑")
                 and res.answer and "调用失败" not in res.answer):
             self.progress("R1 深度复核中（较慢，约 10-40 秒）…")
             try:
