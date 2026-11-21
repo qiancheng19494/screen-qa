@@ -39,3 +39,4 @@ records.jsonl
 errors.json
 _cli.log
 _startup_error.log
+_records_test.csv
