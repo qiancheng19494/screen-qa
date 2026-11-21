@@ -29,6 +29,16 @@ def audit(question: str, answer: str, fill: str = "", reasoning: str = "") -> li
     except Exception:  # noqa: BLE001
         pass
     try:
+        # 整行/系数被吞：sqrt() 空括号、括号里的式子全空 —— 实测 Windows OCR 常见
+        if re.search(r"sqrt\s*\(\s*\)", q, re.I) or re.search(r"\(\s*\)", q):
+            warns.append("OCR 读到了空括号（如 sqrt()x），说明括号里的系数被吞了；"
+                         "建议把上一行题干一起框进来，或按 Ctrl+Alt+T 直接用剪贴板文字作答")
+        elif len(q) >= 20 and not re.search(r"[0-9=^/<>]", q):
+            warns.append("题面里一个数字/符号都没读到，很可能有整行纯符号表达式被 OCR 丢了；"
+                         "建议框大一点（带上题干行），或按 Ctrl+Alt+T 用文字作答")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         want = verify.extract_numbers(fill or answer)
         have = verify.extract_numbers(reasoning)
         if want and have:
