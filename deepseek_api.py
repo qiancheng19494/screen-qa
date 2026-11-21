@@ -30,6 +30,9 @@ class DeepSeekClient:
         self.base_url = (base_url or "https://api.deepseek.com").rstrip("/")
         self.model = model
         self.timeout = timeout
+        # 累计 token 用量（用于花费估算）
+        self.usage_total = {"prompt": 0, "completion": 0}
+        self.last_usage = {"prompt": 0, "completion": 0}
 
     # ------------------------------------------------------------ 底层调用
     def chat(
@@ -70,6 +73,13 @@ class DeepSeekClient:
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
+                used = body.get("usage") or {}
+                self.last_usage = {
+                    "prompt": int(used.get("prompt_tokens") or 0),
+                    "completion": int(used.get("completion_tokens") or 0),
+                }
+                self.usage_total["prompt"] += self.last_usage["prompt"]
+                self.usage_total["completion"] += self.last_usage["completion"]
                 return body["choices"][0]["message"]["content"] or ""
             except urllib.error.HTTPError as exc:
                 detail = ""
@@ -96,3 +106,32 @@ class DeepSeekClient:
                 time.sleep(1.0 * (2 ** attempt))
 
         raise last_err or ApiError("未知错误")
+
+    # ------------------------------------------------------------ 余额
+    def balance(self, timeout: int = 15) -> dict:
+        """查 DeepSeek 账户余额（GET /user/balance）。失败抛 ApiError。"""
+        if not self.api_key:
+            raise ApiError("未配置 DeepSeek API Key")
+        req = urllib.request.Request(
+            f"{self.base_url}/user/balance",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise ApiError(f"查询余额失败（HTTP {exc.code}）", exc.code) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError(f"查询余额失败：{exc}") from exc
+        infos = body.get("balance_infos") or []
+        amount = 0.0
+        currency = "CNY"
+        for info in infos:
+            try:
+                amount += float(info.get("total_balance") or 0)
+                currency = info.get("currency") or currency
+            except Exception:  # noqa: BLE001
+                continue
+        return {"ok": True, "available": bool(body.get("is_available", True)),
+                "amount": amount, "currency": currency, "raw": body}

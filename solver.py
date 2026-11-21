@@ -150,6 +150,10 @@ class SolveResult:
     r1: bool = False               # 是否经过 deepseek-reasoner 复核
     dual: bool = False             # 是否做过「双模型互检」
     dual_note: str = ""            # 互检结论（一致 / 不一致改判 …）
+    tokens_in: int = 0             # 本次求解消耗的 prompt tokens
+    tokens_out: int = 0            # 本次求解消耗的 completion tokens
+    check: str = ""                # 本地验算：ok / fail / skip
+    check_note: str = ""           # 验算说明（"把 x=6 代回去两边相等"）
     error: str = ""
     warnings: list[str] = field(default_factory=list)
 
@@ -224,6 +228,7 @@ class Solver:
 
     # ------------------------------------------------------------------
     def solve(self, question_text: str) -> SolveResult:
+        usage0 = dict(getattr(self.client, "usage_total", {}) or {})
         import time
 
         t0 = time.time()
@@ -457,6 +462,29 @@ class Solver:
                 res.fill = qfmt.apply_format(res.fill, hints)
             except Exception:  # noqa: BLE001
                 pass
+
+        # 6) 本地验算：把答案代回原式，不依赖模型的独立正确性信号
+        try:
+            import verify as _vfy
+            res.check, res.check_note = _vfy.verify(question_text, res.answer, res.fill)
+        except Exception as exc:  # noqa: BLE001
+            res.check, res.check_note = "skip", f"验算不可用：{exc}"
+        try:
+            import ocrcheck
+            res.warnings.extend(ocrcheck.audit(question_text, res.answer, res.fill,
+                                               res.reasoning))
+        except Exception:  # noqa: BLE001
+            pass
+        if res.check == "fail":
+            res.warnings.append(f"本地验算不通过：{res.check_note}")
+            if res.confidence == "高":
+                res.confidence = "中"
+            elif res.confidence == "中":
+                res.confidence = "存疑"
+
+        usage1 = dict(getattr(self.client, "usage_total", {}) or {})
+        res.tokens_in = int(usage1.get("prompt", 0)) - int(usage0.get("prompt", 0))
+        res.tokens_out = int(usage1.get("completion", 0)) - int(usage0.get("completion", 0))
 
         res.elapsed = time.time() - t0
         return res

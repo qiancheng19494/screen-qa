@@ -1,0 +1,103 @@
+{
+  "rows": [
+    {
+      "case": {
+        "image": "_q9.png",
+        "expect": [
+          "x = 6",
+          "6"
+        ],
+        "note": "Question 9 of 12 / 9x+6=60"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    },
+    {
+      "case": {
+        "image": "_q11.png",
+        "expect": [
+          "2, 3"
+        ],
+        "note": "x^2-5x+6=0 两空"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    },
+    {
+      "case": {
+        "image": "_mathlab_single.png",
+        "expect": [
+          "x = 3",
+          "3"
+        ],
+        "note": "MyMathLab 4x-7=5"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    },
+    {
+      "case": {
+        "image": "_mathlab_q7.png",
+        "expect": [
+          "x = 5",
+          "5"
+        ],
+        "note": "5x+9=34"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    },
+    {
+      "case": {
+        "image": "_lowcontrast_test.png",
+        "expect": [
+          "x = 4",
+          "4"
+        ],
+        "note": "浅灰字 2(x+3)=14"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    },
+    {
+      "case": {
+        "image": "_zh_test.png",
+        "expect": [
+          "B",
+          "120"
+        ],
+        "note": "中文选择题 成本/八折"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    },
+    {
+      "case": {
+        "image": "_zh_test3.png",
+        "expect": [
+          "3/5"
+        ],
+        "note": "深色小字 lim sin(3x)/(5x)"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    },
+    {
+      "case": {
+        "image": "_mathlab_multi_big.png",
+        "expect": [
+          "4",
+          "A",
+          "64"
+        ],
+        "note": "一屏三题"
+      },
+      "ok": false,
+      "err": "异常：list.append() takes exactly one argument (2 given)"
+    }
+  ],
+  "ok": 0,
+  "total": 8,
+  "elapsed": 0,
+  "tokens": 0
+}

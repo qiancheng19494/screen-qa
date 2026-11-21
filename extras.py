@@ -423,3 +423,42 @@ def export_pdf(records: list[dict], path, title: str = "屏幕问答 · 作答�
         except Exception:  # noqa: BLE001
             pass
     return str(out)
+
+def _app_dir():
+    import sys
+    from pathlib import Path
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+def prepare_update(dest=None, timeout: int = 120) -> dict:
+    """把 GitHub 上的 main 分支源码下下来解到 dest（默认 <程序目录>/_update）。
+
+    只下载+解包，不动正在运行的文件；替换动作交给用户/批处理完成。
+    """
+    import io
+    import tarfile
+    import urllib.request
+    from pathlib import Path
+
+    out_dir = Path(dest) if dest else (_app_dir() / "_update")
+    url = "https://codeload.github.com/%s/tar.gz/refs/heads/main" % GITHUB_REPO
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "screen-qa"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            blob = resp.read()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "下载失败：%s" % exc}
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
+            members = [m for m in tar.getmembers()
+                       if m.isfile() and ".." not in m.name and not m.name.startswith("/")]
+            for m in members:
+                parts = m.name.split("/", 1)
+                m.name = parts[1] if len(parts) > 1 else parts[0]
+            tar.extractall(out_dir, members=members)
+        count = len(members)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "解包失败：%s" % exc}
+    return {"ok": True, "path": str(out_dir), "files": count, "bytes": len(blob)}

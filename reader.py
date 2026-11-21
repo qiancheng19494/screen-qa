@@ -208,6 +208,7 @@ def read_image(image_path: str, order: list[str] | None = None,
     log = log or (lambda m: None)
     order = order or ["winocr", "modlens"]
     errors: list[str] = []
+    ocr_first = None  # 本地 OCR 的保底结果：视觉模型也不可用时，至少把它交上去
 
     # ── 智能短路：本地 OCR 先跑（0.5 秒级），质量够好就不去碰视觉模型。
     # 视觉模型要拉起 CLI，冷启动可能几十秒；只有 OCR 明显不行（乱码/字太少）
@@ -231,6 +232,7 @@ def read_image(image_path: str, order: list[str] | None = None,
                 return first
             log(f"本地 OCR 质量偏低（{score:.0f}），再用视觉模型看一次…")
             errors.append(f"winocr 质量偏低（{score:.0f}）")
+            ocr_first = first
         else:
             errors.append(f"winocr 不可用（{first.error}）")
         order = [b for b in order if b not in ("winocr", "psocr", "rapidocr")]
@@ -250,6 +252,13 @@ def read_image(image_path: str, order: list[str] | None = None,
                 r.warnings = list(errors) + list(r.warnings)
             return r
         errors.append(f"{backend} 不可用（{r.error}）")
+
+    # 视觉模型也不可用时，别把已经读到的文字扔掉：标注质量偏低照样往上送，
+    # 让模型自己纠正（这比"什么都没识别到"对用户有用得多）。
+    if ocr_first is not None and ocr_first.text.strip():
+        ocr_first.warnings = list(ocr_first.warnings) + [
+            "本地 OCR 质量偏低，视觉模型也不可用；结果可能不准，建议重框或放大"]
+        return ocr_first
 
     out = ReadResult(backend="none")
     out.error = "所有识别方式都失败了 —— " + "；".join(errors)

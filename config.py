@@ -38,7 +38,11 @@ DEFAULTS = {
     "cont_bbox": None,          # [x, y, w, h] 绝对坐标；None = 整个屏幕
     "auto_copy": True,          # 出答案后自动复制到剪贴板
     # 准确度
-    "ocr_quality": "high",      # high = 放大锐化 + 深色反色 + 低对比度二值化，多候选取最优；standard = 只跑原图（更快）
+    "ocr_quality": "high",
+    "lang": "zh",
+    "timeout_s": 120,
+    "follow_accent": True,
+    "mica": True,      # high = 放大锐化 + 深色反色 + 低对比度二值化，多候选取最优；standard = 只跑原图（更快）
     "escalate": True,
     "reasoner": True,           # 采样答案有分歧时自动追加 2 次采样再投票
     "dedupe": True,             # 连续模式下「同一道题」不重复作答（省时间省调用）
@@ -72,7 +76,11 @@ DEFAULTS = {
     "mini": False,
     "plot": True,
     "exam_date": "",
+    # 花费估算用（元/百万 token，按 DeepSeek 官方价，可按自己套餐改）
+    "price_in": 2.0,
+    "price_out": 8.0,
          # 开机自启
+    "regions": [],
 }
 
 
@@ -197,3 +205,69 @@ def add_error(key: str, text: str, answer: str) -> int:
     except Exception:  # noqa: BLE001
         pass
     return len(data)
+
+def cost_of(tokens_in: int, tokens_out: int, cfg: dict | None = None) -> float:
+    """按配置里的单价（元/百万 token）估算一次调用的花费。"""
+    c = cfg or load()
+    try:
+        pin = float(c.get("price_in", 2.0))
+        pout = float(c.get("price_out", 8.0))
+    except Exception:  # noqa: BLE001
+        pin, pout = 2.0, 8.0
+    return (int(tokens_in or 0) * pin + int(tokens_out or 0) * pout) / 1_000_000.0
+
+
+def daily_stats(cfg: dict | None = None) -> dict:
+    """今天的题数 / token / 花费，以及最近 30 题的平均花费（用于估还能做多少题）。"""
+    import time
+
+    today = time.strftime("%Y-%m-%d")
+    recs = load_records(limit=2000)
+    todays = [r for r in recs if str(r.get("ts", "")).startswith(today)]
+    tin = sum(int(r.get("tokens_in") or 0) for r in todays)
+    tout = sum(int(r.get("tokens_out") or 0) for r in todays)
+    cost = cost_of(tin, tout, cfg)
+    recent = recs[-30:]
+    rcost = sum(float(r.get("cost") or 0) for r in recent)
+    avg = (rcost / len(recent)) if recent else 0.0
+    return {"count": len(todays), "tokens_in": tin, "tokens_out": tout,
+            "cost": cost, "avg_cost": avg, "records": len(recs)}
+
+def add_region(name: str, bbox) -> list:
+    """记住一个采集区域（最多 5 个，同名覆盖）。"""
+    cfg = load()
+    regions = [r for r in (cfg.get("regions") or [])
+               if isinstance(r, dict) and r.get("name") != name]
+    regions.append({"name": name, "bbox": list(bbox)})
+    cfg["regions"] = regions[-5:]
+    save(cfg)
+    return cfg["regions"]
+
+
+def export_anki(path=None, limit: int = 500):
+    """把错题本导出成 Anki 可直接导入的 TSV（前端\t后端）。"""
+    out = Path(path) if path else (ROOT / "错题卡片.txt")
+    errs = load_errors()
+    rows = []
+    for key, item in list(errs.items())[:limit]:
+        if not isinstance(item, dict):
+            continue
+        front = (item.get("text") or "").strip().replace("\t", " ").replace("\n", "<br>")
+        back = (item.get("answer") or "").strip().replace("\t", " ")
+        hits = item.get("hits", 1)
+        if front:
+            rows.append(f"{front}\t{back}\t(标记 {hits} 次)")
+    out.write_text("\n".join(rows) + ("\n" if rows else ""), encoding="utf-8-sig")
+    return len(rows), out
+
+def _ensure_defaults() -> None:
+    """补齐运行期新增的配置键（老 config.json 也能直接用）。"""
+    cfg = load()
+    changed = False
+    for key, val in (("lang", "zh"), ("timeout_s", 120), ("follow_accent", True),
+                     ("mica", True), ("regions", [])):
+        if key not in cfg:
+            cfg[key] = val
+            changed = True
+    if changed:
+        save(cfg)

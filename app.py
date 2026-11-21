@@ -41,6 +41,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import capture  # noqa: E402
+import prompts
 import config as cfg_mod  # noqa: E402
 import extras  # noqa: E402
 import questions as qsplit  # noqa: E402
@@ -102,6 +103,24 @@ LIGHT_UI = {
     "red_bg": "#fbe0e0",
 }
 UI = dict(DARK_UI)
+
+
+def apply_system_accent():
+    """Optional: follow the Windows accent colour for the UI accent."""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Microsoft\Windows\DWM")
+        val, _ = winreg.QueryValueEx(key, "AccentColor")
+        winreg.CloseKey(key)
+        r, g, b = val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF
+        if r + g + b < 60:
+            return False
+        UI["accent"] = "#%02x%02x%02x" % (r, g, b)
+        UI["accent_bg"] = "#%02x%02x%02x" % (r // 5, g // 5, b // 5)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def apply_theme(name: str) -> str:
@@ -452,6 +471,45 @@ def _item_res(x):
         return x[-1]
     return x
 
+def run_followup(image_path, cfg, emit, prev_question="", prev_answer=""):
+    """Box a patch of screen and ask a follow-up question about the current problem.
+
+    Single model call (no voting / no cache); result goes to the detail panel only.
+    """
+    import time
+    from deepseek_api import DeepSeekClient
+    t0 = time.time()
+    emit("status", "follow-up: reading the boxed part ...")
+    try:
+        order = cfg.get("reader_order") or ["winocr", "modlens"]
+        rr = reader.read_image(image_path, order=order,
+                              modlens_timeout=int(cfg.get("modlens_timeout", 45)),
+                              log=lambda m: emit("log", m),
+                              ocr_quality=str(cfg.get("ocr_quality", "high")))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "read failed: %s" % exc, "elapsed": time.time() - t0}
+    if not rr.ok or len((rr.text or "").strip()) < 4:
+        return {"ok": False, "error": prompts.FOLLOWUP_TOO_LITTLE, "elapsed": time.time() - t0}
+    emit("log", "follow-up text (%s, %d chars): %s" %
+         (rr.backend, len(rr.text), (rr.text or "").strip()[:120]))
+    user = ("PREVIOUS PROBLEM: %s\n"
+            "MY PREVIOUS ANSWER: %s\n"
+            "NEWLY BOXED CONTENT:\n%s\n" % ((prev_question or "")[:600],
+                                             (prev_answer or "")[:200],
+                                             (rr.text or "").strip()[:1500]))
+    try:
+        client = DeepSeekClient(cfg.get("api_key", ""), cfg.get("base_url", ""),
+                                cfg.get("model", "deepseek-chat"))
+        out = client.chat([{"role": "system", "content": prompts.FOLLOWUP_SYSTEM},
+                           {"role": "user", "content": user}],
+                          temperature=0.2, max_tokens=1024)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "model call failed: %s" % exc,
+                "elapsed": time.time() - t0}
+    return {"ok": True, "text": (out or "").strip(), "read": (rr.text or "").strip(),
+            "elapsed": time.time() - t0}
+
+
 def format_answer(payload: dict) -> str:
     res = payload["result"]
     items = payload.get("items") or [res]
@@ -468,6 +526,11 @@ def format_answer(payload: dict) -> str:
     lines.append(f"【最终答案】{res.answer}")
     if res.fill:
         lines.append(f"【填入答案】{res.fill}")
+    chk = getattr(res, "check", "") or ""
+    if chk == "ok":
+        lines.append(f"【代入验算】✅ {res.check_note}")
+    elif chk == "fail":
+        lines.append(f"【代入验算】⚠ 不通过：{res.check_note}")
     if payload.get("cached"):
         lines.append(f"⚡ 命中缓存：直接秒出（当初算了 {res.elapsed:.1f}s / "
                      f"{res.calls} 次调用，本次只花 {payload['elapsed']:.1f}s）")
@@ -583,6 +646,10 @@ def ensure_bundled_files() -> None:
 
 def cli_main(args) -> int:
     ensure_bundled_files()
+    try:
+        prompts.set_lang(config.load().get("lang", "zh"))
+    except Exception:  # noqa: BLE001
+        pass
     # exe（--windowed）里 sys.stdout/stderr 是 None：改写日志文件，CLI 才不会崩
     if sys.stdout is None or sys.stderr is None:
         try:
@@ -692,11 +759,13 @@ class App:
         self.root = root
         self.cfg = cfg_mod.load()
         apply_theme(self.cfg.get("theme", "dark"))
+        if self.cfg.get("follow_accent", True):
+            apply_system_accent()
         self.q: queue.Queue = queue.Queue()
         self.busy = False
         self._anim = 0
         self._anim_job = None
-        self._status_base = "就绪"
+        self._status_base = prompts.L("ready")
         self.hk = None
         self.last_payload = None
         self.prev_hwnd = 0
@@ -711,6 +780,10 @@ class App:
         # 多题连答 / 托盘 / 更新状态
         self.multi_items = []
         self.multi_idx = 0
+        self.answers_by_no = {}
+        self.recent_shots = []
+        self._task_t0 = 0.0
+        self._slow_warned = False
         self.tray = None
         self.hidden = False
         self.update_info = None
@@ -734,12 +807,14 @@ class App:
         # 被最小化 / Win+D 之后再恢复时，重新贴回右下角
         self.root.bind("<Map>", self._on_map)
         self.root.after(1200, self._setup_tray)
+        self.root.after(3000, self._watch)
         if self.cfg.get("watch_clip"):
             self.root.after(1000, self._start_clip_watch)
         if self.cfg.get("mini"):
             self.root.after(700, self.toggle_mini)
         if self.cfg.get("check_update", True):
             self.root.after(2600, self.check_update_async)
+            self.root.after(3400, lambda: self.check_balance(silent=True))
 
         try:
             exam = str(self.cfg.get("exam_date") or "").strip()
@@ -927,35 +1002,42 @@ class App:
         # ---- 操作
         bar = tk.Frame(wrap, bg=bg)
         bar.pack(fill="x", pady=(10, 0), before=det)
-        self.b_region = Pill(bar, "框选截图", self.shot_region, kind="primary",
+        self.b_region = Pill(bar, prompts.L("capture"), self.shot_region, kind="primary",
                              bold=True, width=104)
         self.b_region.pack(side="left")
-        self.b_full = Pill(bar, "全屏", self.shot_full, kind="ghost", width=64)
+        self.b_full = Pill(bar, prompts.L("full"), self.shot_full, kind="ghost", width=64)
         self.b_full.pack(side="left", padx=(7, 0))
-        self.b_paste = Pill(bar, "粘贴", self.paste_image, kind="ghost", width=64)
+        self.b_paste = Pill(bar, prompts.L("paste"), self.paste_image, kind="ghost", width=64)
         self.b_paste.pack(side="left", padx=(7, 0))
-        self.b_copy = Pill(bar, "复制答案", self.copy_answer, kind="ghost", width=84)
+        self.b_copy = Pill(bar, prompts.L("copy"), self.copy_answer, kind="ghost", width=84)
         self.b_copy.pack(side="right")
         self.b_copy.set_enabled(False)
-        self.b_steps = Pill(bar, "步骤", self.copy_steps, kind="ghost", width=52)
+        self.b_steps = Pill(bar, prompts.L("steps"), self.copy_steps, kind="ghost", width=52)
         self.b_steps.pack(side="right", padx=(0, 7))
         self.b_steps.set_enabled(False)
-        self.b_bad = Pill(bar, "错了", self.mark_error, kind="ghost", width=52)
+        self.b_bad = Pill(bar, prompts.L("bad"), self.mark_error, kind="ghost", width=52)
         self.b_bad.pack(side="right", padx=(0, 7))
         self.b_bad.set_enabled(False)
 
         # 第三行：函数图像 / 朗读 / 迷你浮窗
         bar3 = tk.Frame(wrap, bg=bg)
         bar3.pack(fill="x", pady=(8, 0), before=det)
-        self.b_plot = Pill(bar3, "图像", self.show_plot, kind="ghost", width=58)
+        self.b_plot = Pill(bar3, prompts.L("plot"), self.show_plot, kind="ghost", width=58)
         self.b_plot.pack(side="left")
         self.b_plot.set_enabled(False)
-        self.b_speak = Pill(bar3, "朗读", self.speak_answer, kind="ghost", width=58)
+        self.b_speak = Pill(bar3, prompts.L("speak"), self.speak_answer, kind="ghost", width=58)
         self.b_speak.pack(side="left", padx=(7, 0))
         self.b_speak.set_enabled(False)
-        self.b_mini = Pill(bar3, "迷你", self.toggle_mini, kind="ghost", width=58)
+        self.b_mini = Pill(bar3, prompts.L("mini"), self.toggle_mini, kind="ghost", width=58)
         self.b_mini.pack(side="left", padx=(7, 0))
-        tk.Label(bar3, text="纯文字作答 Ctrl+Alt+T", bg=bg, fg=UI["muted"],
+        self.b_follow = Pill(bar3, prompts.LBL_FOLLOWUP, self.ask_followup,
+                             kind="ghost", width=58)
+        self.b_follow.pack(side="left", padx=(7, 0))
+        self.b_follow.set_enabled(False)
+        self.b_recent = Pill(bar3, prompts.LBL_RECENT, self.recent_menu,
+                             kind="ghost", width=62)
+        self.b_recent.pack(side="left", padx=(7, 0))
+        tk.Label(bar3, text="Ctrl+Alt+T 文字", bg=bg, fg=UI["muted"],
                  font=(FONT, 8)).pack(side="right")
 
         # 一屏多题时，这里会冒出「复制第 N 题」按钮；空的时候不占高度
@@ -968,25 +1050,25 @@ class App:
 
         bar2 = tk.Frame(wrap, bg=bg)
         bar2.pack(fill="x", pady=(8, 0), before=det)
-        self.b_cont = Pill(bar2, "▶  连续截图", self.toggle_continuous,
+        self.b_cont = Pill(bar2, prompts.L("cont"), self.toggle_continuous,
                            kind="success", bold=True, width=118)
         self.b_cont.pack(side="left")
         self.region_lbl = tk.Label(bar2, text=self._region_text(), bg=bg,
                                    fg=UI["muted"], font=(FONT, 9), cursor="hand2")
         self.region_lbl.pack(side="left", padx=(9, 0))
-        self.region_lbl.bind("<Button-1>", lambda e: self.pick_region(quiet=True))
+        self.region_lbl.bind("<Button-1>", lambda e: self.region_menu())
         self.interval_lbl = tk.Label(bar2, text=f"每 {self.cfg.get('interval', 3)} 秒",
                                      bg=bg, fg=UI["muted"], font=(FONT, 9),
                                      cursor="hand2")
         self.interval_lbl.pack(side="left", padx=(10, 0))
         self.interval_lbl.bind("<Button-1>", lambda e: self.open_settings())
         # 右侧：历史面板 / 重算（把这两个从主按钮行挪出来，主行才不会挤爆）
-        self.b_redo = Pill(bar2, "重算", self.redo, kind="ghost", width=58)
+        self.b_redo = Pill(bar2, prompts.L("redo"), self.redo, kind="ghost", width=58)
         self.b_redo.pack(side="right")
         self.b_redo.set_enabled(False)
-        self.b_hist = Pill(bar2, "历史", self.open_history, kind="ghost", width=54)
+        self.b_hist = Pill(bar2, prompts.L("history"), self.open_history, kind="ghost", width=54)
         self.b_hist.pack(side="right", padx=(0, 7))
-        self.b_win = Pill(bar2, "窗口", self.capture_window_menu, kind="ghost", width=58)
+        self.b_win = Pill(bar2, prompts.L("win"), self.capture_window_menu, kind="ghost", width=58)
         self.b_win.pack(side="right", padx=(0, 7))
 
         # ---- 状态栏
@@ -1186,6 +1268,8 @@ class App:
     def _start(self, img):
         if self.busy:
             return
+        self._task_t0 = time.time()
+        self._slow_warned = False
         if not self.cfg.get("api_key"):
             self.log("⚠ 缺少 DeepSeek API Key")
             self.open_settings()
@@ -1492,6 +1576,10 @@ class App:
                         self.paste_image()
                     elif name == "next":
                         self.next_answer()
+                    elif name == "followup":
+                        self._show_followup(payload)
+                    elif name == "follow":
+                        self.ask_followup()
                     elif name == "text":
                         self.solve_text()
                     elif name == "mini":
@@ -1526,6 +1614,8 @@ class App:
             self.hk.add("text", self.cfg.get("hotkey_text", "ctrl+alt+t"),
                         ["ctrl+shift+t", "ctrl+alt+y"])
             # Ctrl+Alt+M：迷你答案条开关
+            self.hk.add("follow", self.cfg.get("hotkey_follow", "ctrl+alt+f"),
+                        ["ctrl+shift+f", "ctrl+alt+g"])
             self.hk.add("mini", self.cfg.get("hotkey_mini", "ctrl+alt+m"),
                         ["ctrl+shift+m", "ctrl+alt+k"])
             if not self.hk.start():
@@ -1629,8 +1719,17 @@ class App:
                 if not dst.exists():
                     shutil.copyfile(src, dst)
                 self.shot_path = str(dst)
+                if self.shot_path not in self.recent_shots:
+                    self.recent_shots.append(self.shot_path)
+                    self.recent_shots = self.recent_shots[-12:]
         except Exception:  # noqa: BLE001
             self.shot_path = getattr(self, "last_image_path", "")
+        self._task_t0 = 0.0
+        self._slow_warned = False
+        try:
+            self._note_answer_consistency(qn2, res)
+        except Exception:  # noqa: BLE001
+            pass
         label, key = CONF_CHIP.get(res.confidence, ("⚪ " + res.confidence, "muted"))
         head = res.answer
         if len(items) > 1:
@@ -1653,6 +1752,15 @@ class App:
             bits.insert(0, "双模型" + ("✓" if agree else "✗"))
         if payload.get("cached"):
             bits.insert(0, "⚡ 缓存")
+        tin = sum(int(getattr(i, "tokens_in", 0) or 0) for i in items)
+        tout = sum(int(getattr(i, "tokens_out", 0) or 0) for i in items)
+        if tin or tout:
+            bits.append("¥{0:.4f}".format(cfg_mod.cost_of(tin, tout, self.cfg)))
+        chk = getattr(res, "check", "") or ""
+        if chk == "ok":
+            bits.insert(0, "✅ 代入验算")
+        elif chk == "fail":
+            bits.insert(0, "⚠ 代入验算不通过")
         self.meta.configure(text=" · ".join(bits))
         self._flash(UI.get(key, UI["accent"]))
         if self.mini is not None:
@@ -1744,6 +1852,13 @@ class App:
                 "cached": bool(payload.get("cached")),
                 "question": (payload.get("text") or "")[:800],
                 "shot": getattr(self, "shot_path", ""),
+                "tokens_in": sum(int(getattr(i, "tokens_in", 0) or 0) for i in items),
+                "tokens_out": sum(int(getattr(i, "tokens_out", 0) or 0) for i in items),
+                "cost": round(cfg_mod.cost_of(
+                    sum(int(getattr(i, "tokens_in", 0) or 0) for i in items),
+                    sum(int(getattr(i, "tokens_out", 0) or 0) for i in items),
+                    self.cfg), 5),
+                "check": getattr(res, "check", ""),
             })
         except Exception:  # noqa: BLE001
             pass
@@ -1929,6 +2044,182 @@ class App:
             self.set_status(f"记录失败：{exc}")
 
     # ------------------------------------------------------------ 历史 / 更新
+    # ------------------------------------------------------------ 最近图
+    def download_update(self):
+        """Download latest source from GitHub into <app dir>/_update (no auto-replace)."""
+        if not messagebox.askyesno(
+                "下载更新",
+                "会把 GitHub 最新源码下载到程序目录的 _update 文件夹（不会自动覆盖当前程序）。继续？"):
+            return
+        self.log("开始下载更新…")
+        self.set_status("下载更新 …")
+
+        def worker():
+            try:
+                info = extras.prepare_update()
+            except Exception as exc:  # noqa: BLE001
+                info = {"ok": False, "error": str(exc)}
+            if info.get("ok"):
+                self.log("下载完成：%s（%d 个文件）" % (info.get("path"), info.get("files", 0)))
+                msg = ("已下载到：\n%s\n\n替换方法：退出本程序 → 把 _update 里的文件"
+                       "复制覆盖到程序目录 → 重新打开。" % info.get("path"))
+                self.root.after(0, lambda: messagebox.showinfo("下载完成", msg))
+            else:
+                self.log("下载失败：%s" % info.get("error"))
+                err = str(info.get("error"))
+                self.root.after(0, lambda: messagebox.showwarning("下载失败", err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def export_cards(self):
+        try:
+            n, path = cfg_mod.export_anki()
+            self.log("已导出 %d 张错题卡片：%s" % (n, path))
+            messagebox.showinfo("导出卡片",
+                                "已导出 %d 张错题卡片：\n%s\n\n"
+                                "Anki → 文件 → 导入 → 选这个 txt" % (n, path))
+        except Exception as exc:  # noqa: BLE001
+            self.log("导出卡片失败：%s" % exc)
+
+    def recent_menu(self):
+        if not self.recent_shots:
+            self.log("还没有做过的题图")
+            return
+        menu = tk.Menu(self.root, tearoff=0, bg=UI["card"], fg=UI["text"],
+                       activebackground=UI["accent"], activeforeground="#07121f",
+                       borderwidth=0, font=(FONT, 9))
+        for item in reversed(self.recent_shots[-6:]):
+            label = Path(item).stem[-24:]
+            menu.add_command(label=label, command=lambda p=item: self._run_path(p))
+        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+
+    # ------------------------------------------------------------ 区域记忆
+    def region_menu(self):
+        menu = tk.Menu(self.root, tearoff=0, bg=UI["card"], fg=UI["text"],
+                       activebackground=UI["accent"], activeforeground="#07121f",
+                       borderwidth=0, font=(FONT, 9))
+        regions = self.cfg.get("regions") or []
+        for r in regions:
+            if not isinstance(r, dict) or not r.get("bbox"):
+                continue
+            name = str(r.get("name") or "区域")
+            menu.add_command(label=name + "  " + str(r["bbox"]),
+                             command=lambda rr=r: self._use_region(rr))
+        if regions:
+            menu.add_separator()
+        menu.add_command(label="圈选新区域…", command=lambda: self.pick_region(quiet=True))
+        menu.add_command(label="记住当前区域…", command=self._save_region)
+        if regions:
+            menu.add_command(label="清除记住的区域", command=self._clear_regions)
+        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+
+    def _use_region(self, region):
+        try:
+            bbox = list(region.get("bbox") or [])
+            if len(bbox) != 4:
+                return
+            self.cont_region = tuple(int(v) for v in bbox)
+            self.cfg["cont_bbox"] = list(self.cont_region)
+            cfg_mod.save(self.cfg)
+            self.region_lbl.configure(text=self._region_text())
+            self.log("区域切到：%s" % region.get("name"))
+        except Exception as exc:  # noqa: BLE001
+            self.log("切换区域失败：%s" % exc)
+
+    def _save_region(self):
+        if not self.cont_region:
+            self.log("当前是整屏；先圈一个区域再记住")
+            return
+        name = "区域 %d" % ((len(self.cfg.get("regions") or [])) + 1)
+        try:
+            self.cfg["regions"] = cfg_mod.add_region(name, self.cont_region)
+            self.log(prompts.MSG_REGION_SAVED.format(name=name))
+        except Exception as exc:  # noqa: BLE001
+            self.log("记住区域失败：%s" % exc)
+
+    def _clear_regions(self):
+        self.cfg["regions"] = []
+        try:
+            saved = cfg_mod.load()
+            saved["regions"] = []
+            cfg_mod.save(saved)
+        except Exception:  # noqa: BLE001
+            pass
+        self.log("已清除记住的区域")
+
+    # ------------------------------------------------------------ 追问
+    def ask_followup(self):
+        prev = self.last_payload or {}
+        res = prev.get("result")
+        if res is None:
+            self.log(prompts.MSG_NEED_PREV)
+            self._beep("warn")
+            return
+        self.log(prompts.MSG_FOLLOWUP_HINT)
+        sel = capture.RegionSelector(self.root)
+        img = sel.select()
+        if img is None:
+            return
+        path = self._shot_path()
+        try:
+            img.save(path)
+        except Exception as exc:  # noqa: BLE001
+            self.log("save failed: %s" % exc)
+            return
+        self._set_buttons(False)
+        self.set_status(prompts.LBL_FOLLOWUP + " ...")
+
+        def worker():
+            try:
+                out = run_followup(path, self.cfg, self._emit_threadsafe,
+                                   prev.get("text") or "", res.answer)
+            except Exception as exc:  # noqa: BLE001
+                out = {"ok": False, "error": str(exc), "elapsed": 0.0}
+            self.q.put(("followup", out))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_followup(self, out):
+        self._set_buttons(True)
+        if not out.get("ok"):
+            self.set_status("追问失败")
+            self.log("⚠ follow-up failed: %s" % out.get("error"))
+            self._beep("warn")
+            return
+        self.set_status(prompts.MSG_FOLLOWUP_TITLE.format(sec=float(out.get("elapsed") or 0)))
+        self.text.insert("1.0", "\n\n" + (out.get("text") or ""))
+        self._beep("done")
+
+    # ------------------------------------------------------------ 一致性
+    def _note_answer_consistency(self, qno, res):
+        if not qno:
+            return
+        no = qno[0]
+        prev = self.answers_by_no.get(no)
+        now = (res.answer or "").strip()
+        if prev and now and prev != now:
+            msg = prompts.MSG_CONSIST_WARN.format(old=prev[:20], new=now[:20])
+            self.log(msg)
+            self.set_status(msg)
+        self.answers_by_no[no] = now
+
+    # ------------------------------------------------------------ 看门狗
+    def _watch(self):
+        try:
+            if self.busy and self._task_t0:
+                waited = time.time() - self._task_t0
+                limit = float(self.cfg.get("timeout_s", 120) or 120)
+                if waited > limit and not self._slow_warned:
+                    self._slow_warned = True
+                    self.log(prompts.MSG_SLOW.format(sec=waited))
+                    self.set_status(prompts.MSG_SLOW.format(sec=waited))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.root.after(2000, self._watch)
+        except Exception:  # noqa: BLE001
+            pass
+
     def open_history(self):
         """历史面板：最近做过的题（可导出 CSV 复习）。"""
         win = tk.Toplevel(self.root)
@@ -2026,6 +2317,33 @@ class App:
              font_size=9, bg=UI["bg"]).pack(side="right", padx=(0, 8))
         Pill(barw, "刷新", reload, kind="ghost", height=30, padx=14,
              font_size=9, bg=UI["bg"]).pack(side="right", padx=(0, 8))
+
+    def check_balance(self, silent: bool = False):
+        """查 DeepSeek 余额 + 今日统计；silent=True 时只写日志不弹窗。"""
+        def worker():
+            try:
+                from deepseek_api import DeepSeekClient
+                client = DeepSeekClient(self.cfg.get("api_key", ""),
+                                        self.cfg.get("base_url", ""))
+                info = client.balance()
+                stats = cfg_mod.daily_stats(self.cfg)
+                avg = float(stats.get("avg_cost") or 0)
+                left = ""
+                if avg > 0 and info.get("amount"):
+                    left = f"，按最近均题 ¥{avg:.4f} 约还能做 {int(info['amount'] / avg)} 题"
+                text = (f"余额 {info.get('amount', 0):.2f} {info.get('currency', 'CNY')}"
+                        f"{left}\n今日 {stats['count']} 题 · 约 ¥{stats['cost']:.4f} · "
+                        f"{stats['tokens_in'] + stats['tokens_out']} tokens")
+                self.q.put(("log", f"💰 {text.replace(chr(10), ' · ')}"))
+                if not silent:
+                    self.root.after(0, lambda: messagebox.showinfo("余额与今日花费", text))
+            except Exception as exc:  # noqa: BLE001
+                msg = f"查余额失败：{exc}"
+                self.q.put(("log", f"⚠ {msg}"))
+                if not silent:
+                    self.root.after(0, lambda: messagebox.showwarning("余额", msg))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def check_update_async(self):
         def worker():
@@ -2137,7 +2455,7 @@ class App:
         frm = tk.Frame(win, bg=bg)
         frm.pack(fill="both", expand=True, padx=18, pady=16)
         win.update_idletasks()
-        w, h = 640, 690
+        w, h = 700, 760
         px = self.root.winfo_rootx() + self.root.winfo_width() - w
         py = self.root.winfo_rooty() + self.root.winfo_height() - h
         win.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
@@ -2280,8 +2598,33 @@ class App:
                    highlightbackground=UI["border"], font=(FONT, 9)
                    ).pack(side="left", padx=(6, 0))
 
+        look2 = tk.Frame(frm, bg=bg)
+        look2.grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        tk.Label(look2, text="语言", bg=bg, fg=UI["dim"],
+                 font=(FONT, 9)).pack(side="left")
+        lang_var = tk.StringVar(
+            value=("English" if str(self.cfg.get("lang", "zh")).startswith("en") else "中文"))
+        lang_box = tk.OptionMenu(look2, lang_var, "中文", "English")
+        self._style_optionmenu(lang_box, width=7)
+        lang_box.configure(bg=card, fg=UI["text"], activebackground=card2,
+                           activeforeground=UI["text"], highlightthickness=0)
+        lang_box.pack(side="left", padx=(6, 18))
+
+        accent_var = tk.BooleanVar(value=bool(self.cfg.get("follow_accent", True)))
+        tk.Checkbutton(look2, text="跟随系统强调色", variable=accent_var, bg=bg, fg=UI["dim"],
+                       selectcolor=card, activebackground=bg, activeforeground=UI["text"],
+                       font=(FONT, 9), bd=0, highlightthickness=0
+                       ).pack(side="left")
+        tk.Label(look2, text="Mica 背景", bg=bg, fg=UI["dim"],
+                 font=(FONT, 9)).pack(side="left", padx=(18, 0))
+        mica_var = tk.BooleanVar(value=bool(self.cfg.get("mica", True)))
+        tk.Checkbutton(look2, text="启用", variable=mica_var, bg=bg, fg=UI["dim"],
+                       selectcolor=card, activebackground=bg, activeforeground=UI["text"],
+                       font=(FONT, 9), bd=0, highlightthickness=0
+                       ).pack(side="left", padx=(6, 0))
+
         row6 = tk.Frame(frm, bg=bg)
-        row6.grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        row6.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
         tk.Label(row6, text=self._region_text(), bg=bg, fg=UI["muted"],
                  font=(FONT, 9)).pack(side="left")
         Pill(row6, "清空缓存", (lambda: msg.configure(
@@ -2409,17 +2752,25 @@ class App:
 
             threading.Thread(target=worker, daemon=True).start()
 
-        Pill(row6, "检查更新", do_update, kind="flat", height=26,
+        row7 = tk.Frame(frm, bg=bg)
+        row7.grid(row=10, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        Pill(row7, prompts.L("update"), do_update, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left")
+        Pill(row7, prompts.L("history"), self.open_history, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
-        Pill(row6, "历史", self.open_history, kind="flat", height=26,
+        Pill(row7, "下载更新", self.download_update, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row7, "导出卡片", self.export_cards, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row7, "余额", lambda: self.check_balance(silent=False), kind="flat",
+             height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
 
         msg = tk.Label(frm, text="Key 获取：platform.deepseek.com → API keys",
                        bg=bg, fg=UI["muted"], font=(FONT, 9))
-        msg.grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        msg.grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         btns = tk.Frame(frm, bg=bg)
-        btns.grid(row=10, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        btns.grid(row=12, column=0, columnspan=2, sticky="e", pady=(14, 0))
 
         def save():
             self.cfg["api_key"] = vars_["api_key"].get().strip()
@@ -2471,6 +2822,10 @@ class App:
             self.cfg["mini"] = bool(mini_var.get())
             self.cfg["plot"] = bool(plot_var.get())
             self.cfg["exam_date"] = (exam_var.get() or "").strip()
+            self.cfg["lang"] = "en" if lang_var.get().startswith("English") else "zh"
+            self.cfg["follow_accent"] = bool(accent_var.get())
+            self.cfg["mica"] = bool(mica_var.get())
+            prompts.set_lang(self.cfg["lang"])
             cfg_mod.save(self.cfg)
             self.topmost = self.cfg["always_on_top"]
             try:
