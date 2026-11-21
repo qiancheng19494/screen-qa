@@ -251,3 +251,225 @@ def send_paste(enter: bool = False, settle: float = 0.12) -> bool:
     except Exception:  # noqa: BLE001
         _INPUT_INJECTED = False
         return False
+
+# ---------------------------------------------------------------- 剪贴板
+CF_TEXT = 1
+CF_BITMAP = 2
+CF_DIB = 8
+CF_UNICODETEXT = 13
+CF_DIBV5 = 17
+
+
+def clipboard_sequence() -> int:
+    """剪贴板变更计数（每次有新内容都会 +1）。"""
+    try:
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _u32():
+    u = ctypes.windll.user32
+    k32 = ctypes.windll.kernel32
+    u.GetClipboardData.restype = ctypes.c_void_p
+    u.GetClipboardData.argtypes = [ctypes.c_uint]
+    u.SetClipboardData.restype = ctypes.c_void_p
+    u.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    u.IsClipboardFormatAvailable.restype = ctypes.c_int
+    u.IsClipboardFormatAvailable.argtypes = [ctypes.c_uint]
+    k32.GlobalAlloc.restype = ctypes.c_void_p
+    k32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [ctypes.c_void_p]
+    k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    return u, k32
+
+
+def _open_clipboard(retries: int = 6, wait: float = 0.05) -> bool:
+    u = ctypes.windll.user32
+    for _ in range(max(1, retries)):
+        if u.OpenClipboard(None):
+            return True
+        time.sleep(wait)
+    return False
+
+
+def clipboard_text() -> str:
+    """读剪贴板里的纯文字（拿不到返回空串）。"""
+    u, k32 = _u32()
+    if not _open_clipboard():
+        return ""
+    try:
+        if not u.IsClipboardFormatAvailable(CF_UNICODETEXT):
+            return ""
+        h = u.GetClipboardData(CF_UNICODETEXT)
+        if not h:
+            return ""
+        ptr = k32.GlobalLock(h)
+        if not ptr:
+            return ""
+        try:
+            return ctypes.wstring_at(ptr)
+        finally:
+            k32.GlobalUnlock(h)
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        try:
+            u.CloseClipboard()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def clipboard_has_image() -> bool:
+    u = ctypes.windll.user32
+    if not _open_clipboard():
+        return False
+    try:
+        return bool(u.IsClipboardFormatAvailable(CF_DIB) or
+                    u.IsClipboardFormatAvailable(CF_BITMAP) or
+                    u.IsClipboardFormatAvailable(CF_DIBV5))
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        try:
+            u.CloseClipboard()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def clipboard_image() -> Optional[Image.Image]:
+    """把剪贴板里的图（Win+Shift+S / 微信截图）取成 PIL.Image。"""
+    try:
+        if not clipboard_has_image():
+            return None
+        img = ImageGrab.grabclipboard()
+        if isinstance(img, Image.Image):
+            return img
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def clipboard_set_text(text: str) -> bool:
+    """把文字写进剪贴板（自己用，省得依赖 tk 的 clipboard 生命期问题）。"""
+    u, k32 = _u32()
+    data = (text or "").encode("utf-16-le") + b"\x00\x00"
+    if not _open_clipboard():
+        return False
+    try:
+        u.EmptyClipboard()
+        h = k32.GlobalAlloc(0x0042, len(data))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+        if not h:
+            return False
+        ptr = k32.GlobalLock(h)
+        if not ptr:
+            return False
+        try:
+            ctypes.memmove(ptr, data, len(data))
+        finally:
+            k32.GlobalUnlock(h)
+        if not u.SetClipboardData(CF_UNICODETEXT, h):
+            return False
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        try:
+            u.CloseClipboard()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ---------------------------------------------------------------- 按窗口截图
+def list_windows(min_size: int = 200) -> list[tuple[int, str]]:
+    """列出可见的顶层窗口（跳过极小窗口/无标题窗口）。"""
+    u = ctypes.windll.user32
+    out: list[tuple[int, str]] = []
+    P = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def cb(hwnd, _lparam):
+        try:
+            if not u.IsWindowVisible(hwnd):
+                return True
+            n = u.GetWindowTextLengthW(hwnd)
+            if n <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            u.GetWindowTextW(hwnd, buf, n + 1)
+            title = buf.value.strip()
+            if not title:
+                return True
+            r = (ctypes.c_long * 4)()
+            u.GetWindowRect(hwnd, r)
+            w, h = r[2] - r[0], r[3] - r[1]
+            if w < min_size or h < min_size:
+                return True
+            if title in ("Program Manager", "Windows 输入体验"):
+                return True
+            out.append((int(hwnd), title[:80]))
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    try:
+        u.EnumWindows(P(cb), 0)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def window_title(hwnd: int) -> str:
+    try:
+        n = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        ctypes.windll.user32.GetWindowTextW(hwnd, buf, n + 1)
+        return buf.value
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def grab_window(hwnd: int) -> Optional[Image.Image]:
+    """抓指定窗口的内容（PrintWindow，被别的窗口遮挡也能抓到）。"""
+    from PIL import Image as _Image
+
+    u = ctypes.windll.user32
+    g32 = ctypes.windll.gdi32
+    try:
+        rect = (ctypes.c_long * 4)()
+        u.GetWindowRect(hwnd, rect)
+        w, h = rect[2] - rect[0], rect[3] - rect[1]
+        if w <= 0 or h <= 0:
+            return None
+        hdc = u.GetWindowDC(hwnd)
+        mdc = g32.CreateCompatibleDC(hdc)
+        bmp = g32.CreateCompatibleBitmap(hdc, w, h)
+        old = g32.SelectObject(mdc, bmp)
+        ok = u.PrintWindow(hwnd, mdc, 2)  # PW_RENDERFULLCONTENT
+        if not ok:
+            u.PrintWindow(hwnd, mdc, 0)
+        class _BIH(ctypes.Structure):
+            _fields_ = [
+                ("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_long),
+                ("biHeight", ctypes.c_long), ("biPlanes", ctypes.c_uint16),
+                ("biBitCount", ctypes.c_uint16), ("biCompression", ctypes.c_uint32),
+                ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_long),
+                ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", ctypes.c_uint32),
+                ("biClrImportant", ctypes.c_uint32),
+            ]
+        bi = _BIH()
+        bi.biSize = ctypes.sizeof(_BIH)
+        bi.biWidth = w
+        bi.biHeight = -h
+        bi.biPlanes = 1
+        bi.biBitCount = 32
+        buf = ctypes.create_string_buffer(w * h * 4)
+        g32.GetDIBits(mdc, bmp, 0, h, buf, ctypes.byref(bi), 0)
+        img = _Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
+        g32.SelectObject(mdc, old)
+        g32.DeleteObject(bmp)
+        g32.DeleteDC(mdc)
+        u.ReleaseDC(hwnd, hdc)
+        return img
+    except Exception:  # noqa: BLE001
+        return None

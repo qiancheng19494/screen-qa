@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -107,7 +108,7 @@ def set_autostart(enable: bool) -> bool:
 
 
 # ----------------------------------------------------------------- 版本检查
-LOCAL_VERSION = "2.5.0"
+LOCAL_VERSION = "2.6.0"
 
 
 def check_update(timeout: float = 8.0) -> dict:
@@ -314,3 +315,111 @@ class TrayIcon(threading.Thread):
                 ctypes.windll.user32.PostMessageW(self.hwnd, 0x0400 + 21, 0, 0)
         except Exception:  # noqa: BLE001
             pass
+
+# ---------------------------------------------------------------- 语音朗读
+def speak(text: str, lang: str = "zh", wait: bool = False) -> bool:
+    """用系统自带 SAPI 朗读（不依赖第三方库）。"""
+    text = (text or "").strip()
+    if not text:
+        return False
+    text = text.replace('"', "'").replace("`", "'")[:1200]
+    voice = "Microsoft Huihui Desktop" if (lang or "zh").startswith("zh") else "Microsoft Zira Desktop"
+    ps = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        f"try {{ $s.SelectVoice('{voice}') }} catch {{}}; "
+        "$s.Rate = 0; "
+        f'$s.Speak("{text}")'
+    )
+    try:
+        flags = 0 if wait else 0x08000000  # CREATE_NO_WINDOW
+        subprocess.Popen(["powershell", "-NoProfile", "-Command", ps],
+                         creationflags=flags, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# ---------------------------------------------------------------- 导出 PDF
+def export_pdf(records: list[dict], path, title: str = "屏幕问答 · 作答记录", png_out: str = "") -> str:
+    """把作答记录排成 PDF（题目截图 + 答案 + 步骤）。纯 PIL，无需第三方库。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font_path = "C:/Windows/Fonts/msyh.ttc"
+    def _font(size):
+        try:
+            return ImageFont.truetype(font_path, size)
+        except Exception:  # noqa: BLE001
+            return ImageFont.load_default()
+
+    W, H = 1240, 1754           # A4 @150dpi
+    margin = 80
+    pages = []
+    page = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(page)
+    f_title, f_h, f_body, f_meta = _font(40), _font(26), _font(24), _font(20)
+    y = margin
+    d.text((margin, y), title, font=f_title, fill="#111827")
+    y += 60
+    d.text((margin, y), f"共 {len(records)} 题 · 由「屏幕问答」生成", font=f_meta, fill="#6b7280")
+    y += 50
+
+    def wrap(text, font, width):
+        lines, cur = [], ""
+        for ch in text.replace("\r", ""):
+            if ch == "\n":
+                lines.append(cur); cur = ""; continue
+            if d.textlength(cur + ch, font=font) <= width:
+                cur += ch
+            else:
+                lines.append(cur); cur = ch
+        if cur:
+            lines.append(cur)
+        return lines
+
+    for i, rec in enumerate(records, 1):
+        block_h = 260
+        if y + block_h > H - margin:
+            pages.append(page)
+            page = Image.new("RGB", (W, H), "white")
+            d = ImageDraw.Draw(page)
+            y = margin
+        q = (rec.get("question") or rec.get("title") or "").strip()
+        ans = str(rec.get("answer") or "").strip()
+        fill = str(rec.get("fill") or "").strip()
+        conf = str(rec.get("confidence") or "")
+        ts = str(rec.get("ts") or "")
+        d.text((margin, y), f"{i}. {q[:60]}", font=f_h, fill="#111827")
+        y += 36
+        meta = f"{ts}  ·  置信度 {conf}  ·  {rec.get('elapsed','?')}s  ·  {rec.get('model','')}"
+        d.text((margin, y), meta[:110], font=f_meta, fill="#6b7280")
+        y += 30
+        for line in wrap(f"答案：{ans}", f_body, W - margin * 2)[:6]:
+            d.text((margin, y), line, font=f_body, fill="#111827")
+            y += 32
+        if fill:
+            d.text((margin, y), f"填入：{fill}", font=f_body, fill="#047857")
+            y += 32
+        img_path = rec.get("shot") or ""
+        try:
+            if img_path and os.path.exists(img_path):
+                im = Image.open(img_path)
+                im.thumbnail((W - margin * 2, 420))
+                page.paste(im, (margin, y))
+                y += im.size[1] + 18
+        except Exception:  # noqa: BLE001
+            pass
+        d.line([(margin, y), (W - margin, y)], fill="#e5e7eb")
+        y += 24
+    pages.append(page)
+
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pages[0].save(out, "PDF", save_all=True, append_images=pages[1:], resolution=150)
+    if png_out:
+        try:
+            pages[0].save(png_out)
+        except Exception:  # noqa: BLE001
+            pass
+    return str(out)

@@ -61,7 +61,18 @@ DEFAULTS = {
     "last_pos": "",             # "WxH+X+Y"
     "check_update": True,       # 启动时检查 GitHub 有没有新版本
     "tray": True,               # 关窗口时缩到托盘（而不是退出）
-    "autostart": False,         # 开机自启
+    "autostart": False,
+    # v2.6：纯文字作答 / 窗口截图 / 迷你浮窗 / 朗读 / 剪贴板监听 / 函数图像 / 考试日期
+    "hotkey_text": "ctrl+alt+t",
+    "hotkey_mini": "ctrl+alt+m",
+    "watch_clip": False,
+    "watch_titles": "",
+    "tts": False,
+    "tts_lang": "zh",
+    "mini": False,
+    "plot": True,
+    "exam_date": "",
+         # 开机自启
 }
 
 
@@ -78,7 +89,8 @@ def load() -> dict:
     for _k in ("verify", "escalate", "auto_copy", "always_on_top", "sound",
                "dedupe", "cache", "multi", "fast", "reasoner", "refocus",
                "auto_paste", "auto_enter", "dual", "vision_first",
-               "remember_pos", "check_update", "tray", "autostart"):
+               "remember_pos", "check_update", "tray", "autostart",
+               "watch_clip", "tts", "mini", "plot"):
         if _k in cfg:
             cfg[_k] = bool(cfg.get(_k, DEFAULTS[_k]))
     # 环境变量优先

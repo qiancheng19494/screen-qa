@@ -16,6 +16,7 @@ import queue
 import re
 import shutil
 import sys
+import plotter
 import tempfile
 import threading
 import time
@@ -309,7 +310,7 @@ def _fast_downgrade(items, cfg):
             it.confidence = "中"
 
 
-def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
+def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> dict:
     t0 = time.time()
 
     reader_order = cfg.get("reader_order") or ["winocr", "modlens"]
@@ -317,14 +318,26 @@ def run_pipeline(image_path: str, cfg: dict, emit) -> dict:
         # 几何图模式：图形/坐标轴本地 OCR 读不出来，必须让视觉模型看整图
         reader_order = ["modlens", "winocr"]
         emit("log", "几何图模式：先用视觉模型读整图…")
-    emit("log", f"识别中（{' → '.join(reader_order)}）…")
-    rr = reader.read_image(
-        image_path,
-        order=reader_order,
-        modlens_timeout=int(cfg.get("modlens_timeout", 300)),
-        log=lambda m: emit("log", m),
-        ocr_quality=str(cfg.get("ocr_quality", "high")),
-    )
+    if raw_text is not None:
+        class _ReadShim:
+            def __init__(self, text):
+                self.text = text
+                self.backend = "剪贴板文字"
+                self.warnings = ["直接用了剪贴板里的文字，没有截图（更快更准）"]
+                self.elapsed = 0.0
+                self.error = ""
+        rr = _ReadShim(raw_text)
+        emit("log", f"纯文字模式：{len(rr.text)} 字（跳过 OCR）")
+    else:
+        emit("log", f"识别中（{' → '.join(reader_order)}）…")
+        rr = reader.read_image(
+            image_path,
+            order=reader_order,
+            modlens_timeout=int(cfg.get("modlens_timeout", 300)),
+            log=lambda m: emit("log", m),
+            ocr_quality=str(cfg.get("ocr_quality", "high")),
+        )
+
     if not rr.text:
         return {"ok": False, "stage": "read", "error": rr.error,
                 "elapsed": time.time() - t0}
@@ -605,6 +618,75 @@ def cli_main(args) -> int:
 
 
 # ---------------------------------------------------------------- 主界面
+
+class MiniBar:
+    """迷你答案条：一行答案，半透明、可拖动、点一下复制。"""
+
+    def __init__(self, master, ui, on_copy, on_close):
+        self.ui = ui
+        self.on_copy = on_copy
+        self.top = tk.Toplevel(master)
+        self.top.overrideredirect(True)
+        self.top.attributes("-topmost", True)
+        try:
+            self.top.attributes("-alpha", 0.90)
+        except Exception:  # noqa: BLE001
+            pass
+        self.top.configure(bg=ui["card"])
+        self.frame = tk.Frame(self.top, bg=ui["card"], padx=10, pady=6)
+        self.frame.pack(fill="both", expand=True)
+        self.dot = tk.Label(self.frame, text="●", bg=ui["card"], fg=ui["accent"],
+                            font=("Microsoft YaHei UI", 10))
+        self.dot.pack(side="left")
+        self.lbl = tk.Label(self.frame, text="等待作答…", bg=ui["card"],
+                            fg=ui["text"], font=("Microsoft YaHei UI", 13),
+                            anchor="w", justify="left")
+        self.lbl.pack(side="left", padx=(6, 10))
+        self.btn_close = tk.Label(self.frame, text="✕", bg=ui["card"],
+                                  fg=ui["muted"], font=("Microsoft YaHei UI", 10))
+        self.btn_close.pack(side="right")
+        self.btn_close.bind("<Button-1>", lambda _e: on_close())
+        for w in (self.frame, self.lbl, self.dot):
+            w.bind("<Button-1>", self._on_press)
+            w.bind("<B1-Motion>", self._on_drag)
+            w.bind("<Double-Button-1>", lambda _e: self.on_copy())
+        self.top.geometry("360x40+120+120")
+
+    # 拖动
+    def _on_press(self, ev):
+        self._drag = (ev.x_root, ev.y_root,
+                      self.top.winfo_x(), self.top.winfo_y())
+
+    def _on_drag(self, ev):
+        try:
+            x0, y0, wx, wy = self._drag
+            self.top.geometry(f"+{wx + ev.x_root - x0}+{wy + ev.y_root - y0}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def set_text(self, text, key="accent"):
+        try:
+            self.lbl.configure(text=text[:120] or "等待作答…")
+            self.dot.configure(fg=self.ui.get(key, self.ui["accent"]))
+            need = tkfont.Font(font=self.lbl.cget("font")).measure(text[:120])
+            self.top.geometry(f"{min(760, max(240, need + 90))}x40")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def show(self):
+        try:
+            self.top.deiconify()
+            self.top.lift()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def destroy(self):
+        try:
+            self.top.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -632,6 +714,12 @@ class App:
         self.tray = None
         self.hidden = False
         self.update_info = None
+        # v2.6：迷你浮窗 / 纯文字 / 窗口截图 / 函数图像 / 朗读 / 剪贴板监听
+        self.mini = None
+        self.last_image_path = ""
+        self.shot_path = ""
+        self.plot_img = None
+        self._clip_seq = 0
 
         capture.enable_dpi_awareness()
         self._init_window()
@@ -646,8 +734,23 @@ class App:
         # 被最小化 / Win+D 之后再恢复时，重新贴回右下角
         self.root.bind("<Map>", self._on_map)
         self.root.after(1200, self._setup_tray)
+        if self.cfg.get("watch_clip"):
+            self.root.after(1000, self._start_clip_watch)
+        if self.cfg.get("mini"):
+            self.root.after(700, self.toggle_mini)
         if self.cfg.get("check_update", True):
             self.root.after(2600, self.check_update_async)
+
+        try:
+            exam = str(self.cfg.get("exam_date") or "").strip()
+            if exam:
+                import datetime as _dt
+                d = _dt.date.fromisoformat(exam)
+                days = (d - _dt.date.today()).days
+                self.log(f"考试日期 {exam}：还剩 {days} 天" if days >= 0
+                         else f"考试日期 {exam} 已过去 {-days} 天")
+        except Exception:  # noqa: BLE001
+            pass
 
         if not self.cfg.get("api_key"):
             self.set_status("⚠ 还没填 API Key —— 点右上角 ⚙")
@@ -664,7 +767,7 @@ class App:
             self.font_scale = max(80, min(160, int(self.cfg.get("font_scale", 100)))) / 100.0
         except Exception:  # noqa: BLE001
             self.font_scale = 1.0
-        place_bottom_right(root, 474, 700)
+        place_bottom_right(root, 474, 742)
         pos = str(self.cfg.get("last_pos") or "")
         if self.cfg.get("remember_pos") and re.match(r"^\d+x\d+[+-]\d+[+-]\d+$", pos):
             try:
@@ -841,6 +944,20 @@ class App:
         self.b_bad.pack(side="right", padx=(0, 7))
         self.b_bad.set_enabled(False)
 
+        # 第三行：函数图像 / 朗读 / 迷你浮窗
+        bar3 = tk.Frame(wrap, bg=bg)
+        bar3.pack(fill="x", pady=(8, 0), before=det)
+        self.b_plot = Pill(bar3, "图像", self.show_plot, kind="ghost", width=58)
+        self.b_plot.pack(side="left")
+        self.b_plot.set_enabled(False)
+        self.b_speak = Pill(bar3, "朗读", self.speak_answer, kind="ghost", width=58)
+        self.b_speak.pack(side="left", padx=(7, 0))
+        self.b_speak.set_enabled(False)
+        self.b_mini = Pill(bar3, "迷你", self.toggle_mini, kind="ghost", width=58)
+        self.b_mini.pack(side="left", padx=(7, 0))
+        tk.Label(bar3, text="纯文字作答 Ctrl+Alt+T", bg=bg, fg=UI["muted"],
+                 font=(FONT, 8)).pack(side="right")
+
         # 一屏多题时，这里会冒出「复制第 N 题」按钮；空的时候不占高度
         self.multi_bar = tk.Frame(wrap, bg=bg)
         self.multi_bar.pack(fill="x", before=bar)
@@ -869,6 +986,8 @@ class App:
         self.b_redo.set_enabled(False)
         self.b_hist = Pill(bar2, "历史", self.open_history, kind="ghost", width=54)
         self.b_hist.pack(side="right", padx=(0, 7))
+        self.b_win = Pill(bar2, "窗口", self.capture_window_menu, kind="ghost", width=58)
+        self.b_win.pack(side="right", padx=(0, 7))
 
         # ---- 状态栏
         st = tk.Frame(self.root, bg=UI["card2"])
@@ -1080,6 +1199,7 @@ class App:
     def _run_path(self, path, bypass=False):
         if self.busy:
             return
+        self.last_image_path = str(path)
         self.busy = True
         self._set_buttons(False)
         self.set_status("处理中…")
@@ -1121,7 +1241,8 @@ class App:
         for b in (self.b_region, self.b_full, self.b_paste):
             b.set_enabled(enabled)
         if not enabled:
-            for b in (self.b_copy, self.b_steps, self.b_bad, self.b_redo):
+            for b in (self.b_copy, self.b_steps, self.b_bad, self.b_redo,
+                      self.b_plot, self.b_speak):
                 try:
                     b.set_enabled(False)
                 except Exception:  # noqa: BLE001
@@ -1371,6 +1492,10 @@ class App:
                         self.paste_image()
                     elif name == "next":
                         self.next_answer()
+                    elif name == "text":
+                        self.solve_text()
+                    elif name == "mini":
+                        self.toggle_mini()
             except queue.Empty:
                 pass
             except Exception:  # noqa: BLE001
@@ -1397,6 +1522,12 @@ class App:
             # Ctrl+Alt+N：一屏多题时切到下一题的答案
             self.hk.add("next", self.cfg.get("hotkey_next", "ctrl+alt+n"),
                         ["ctrl+shift+n", "ctrl+alt+m"])
+            # Ctrl+Alt+T：剪贴板里已经是题目文字 → 跳过 OCR 直接作答
+            self.hk.add("text", self.cfg.get("hotkey_text", "ctrl+alt+t"),
+                        ["ctrl+shift+t", "ctrl+alt+y"])
+            # Ctrl+Alt+M：迷你答案条开关
+            self.hk.add("mini", self.cfg.get("hotkey_mini", "ctrl+alt+m"),
+                        ["ctrl+shift+m", "ctrl+alt+k"])
             if not self.hk.start():
                 self.log(f"⚠ 全局热键不可用：{self.hk.error}（按钮仍可用）")
             elif getattr(self.hk, "failed", None):
@@ -1416,19 +1547,18 @@ class App:
             self.hk_region_name = region
             if self.ans["fg"] == UI["dim"] or "圈住题目" in self.ans.cget("text"):
                 self.ans.configure(text=f"按 {region} 圈住题目")
-            tips = [f"就绪 · 按 {region} 圈题"]
+            # 状态栏只放最重要的两个键；其余在提示与 README 里（490px 放不下四条）
+            self.hk_short = f"就绪 · {region} 框选 · Ctrl+Alt+T 文字作答"
             full = self._key_name("full", "ctrl+alt+w")
             want_full = (self.cfg.get("hotkey_full") or "ctrl+alt+w").lower()
             if (getattr(self.hk, "bound", None) or {}).get("full", want_full) != want_full:
-                tips.append(f"整屏 {full}")
                 if not getattr(self, "_hk_noted", False):
                     self._hk_noted = True
-                    self.log(f"ℹ {want_full.replace('+', '+').upper()} 被别的软件占用，整屏已改用 {full}")
+                    self.log(f"ℹ {want_full.upper()} 被别的软件占用，整屏已改用 {full}")
             redo = self._key_name("redo", "ctrl+alt+r")
-            tips.append(f"重算 {redo}")
             paste = self._key_name("paste", "ctrl+alt+v")
-            tips.append(f"剪贴板 {paste}")
-            self.set_status(" · ".join(tips))
+            self.log(f"热键：框选 {region} · 整屏 {full} · 重算 {redo} · 剪贴板图 {paste} · 纯文字 Ctrl+Alt+T · 迷你 Ctrl+Alt+M")
+            self.set_status(self.hk_short)
         except Exception:  # noqa: BLE001
             pass
 
@@ -1483,6 +1613,24 @@ class App:
         self.multi_idx = 0
         self.b_steps.set_enabled(bool(res.reasoning))
         self.b_bad.set_enabled(True)
+        self.b_speak.set_enabled(True)
+        try:
+            _expr = plotter.extract_function(payload.get("text") or "")
+            self.b_plot.set_enabled(bool(_expr) and bool(self.cfg.get("plot", True)))
+        except Exception:  # noqa: BLE001
+            self.b_plot.set_enabled(False)
+        # 存一份题目截图，导出 PDF 时一起排进去
+        try:
+            src = getattr(self, "last_image_path", "")
+            if src and Path(src).exists():
+                shots = ROOT / "shots"
+                shots.mkdir(exist_ok=True)
+                dst = shots / (Path(src).stem + ".png")
+                if not dst.exists():
+                    shutil.copyfile(src, dst)
+                self.shot_path = str(dst)
+        except Exception:  # noqa: BLE001
+            self.shot_path = getattr(self, "last_image_path", "")
         label, key = CONF_CHIP.get(res.confidence, ("⚪ " + res.confidence, "muted"))
         head = res.answer
         if len(items) > 1:
@@ -1507,6 +1655,11 @@ class App:
             bits.insert(0, "⚡ 缓存")
         self.meta.configure(text=" · ".join(bits))
         self._flash(UI.get(key, UI["accent"]))
+        if self.mini is not None:
+            try:
+                self.mini.set_text(f"{res.fill or res.answer}", key)
+            except Exception:  # noqa: BLE001
+                pass
 
         self.text.delete("1.0", "end")
         for w in payload.get("warnings") or []:
@@ -1567,6 +1720,8 @@ class App:
         mode = " · 极速" if self.cfg.get("fast") else ""
         self.set_status(f"{qtag}{label}{mode} · 总 {payload['elapsed']:.1f}s{tail}")
         self._beep("done")
+        if self.cfg.get("tts"):
+            self.speak_answer()
         try:
             cfg_mod.save_history(
                 payload["text"], format_answer(payload),
@@ -1588,6 +1743,7 @@ class App:
                 "backend": payload.get("backend", ""),
                 "cached": bool(payload.get("cached")),
                 "question": (payload.get("text") or "")[:800],
+                "shot": getattr(self, "shot_path", ""),
             })
         except Exception:  # noqa: BLE001
             pass
@@ -1848,8 +2004,24 @@ class App:
             if vals and self._copy_text(str(vals[2] or vals[1])):
                 self.set_status("已复制选中那条的答案")
 
-        Pill(barw, "导出 CSV", do_export, kind="primary", height=30, padx=14,
+        def do_export_pdf():
+            recs = cfg_mod.load_records(limit=200)
+            if not recs:
+                messagebox.showwarning("导出失败", "还没有作答记录")
+                return
+            name = f"screenqa-复习-{time.strftime('%Y%m%d-%H%M%S')}.pdf"
+            target = ROOT / name
+            try:
+                extras.export_pdf(recs, target)
+                messagebox.showinfo("导出完成", f"已生成复习 PDF（{len(recs)} 题）：\n{target}")
+                self.set_status(f"已导出复习资料 → {name}")
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showwarning("导出失败", f"{type(exc).__name__}: {exc}")
+
+        Pill(barw, "导出 PDF", do_export_pdf, kind="primary", height=30, padx=14,
              font_size=9, bg=UI["bg"]).pack(side="right")
+        Pill(barw, "导出 CSV", do_export, kind="ghost", height=30, padx=14,
+             font_size=9, bg=UI["bg"]).pack(side="right", padx=(0, 8))
         Pill(barw, "复制选中", do_copy, kind="ghost", height=30, padx=14,
              font_size=9, bg=UI["bg"]).pack(side="right", padx=(0, 8))
         Pill(barw, "刷新", reload, kind="ghost", height=30, padx=14,
@@ -2045,6 +2217,10 @@ class App:
         tray_var = tk.BooleanVar(value=bool(self.cfg.get("tray", True)))
         boot_var = tk.BooleanVar(value=bool(self.cfg.get("autostart", False)))
         upd_var = tk.BooleanVar(value=bool(self.cfg.get("check_update", True)))
+        watch_var = tk.BooleanVar(value=bool(self.cfg.get("watch_clip", False)))
+        tts_var = tk.BooleanVar(value=bool(self.cfg.get("tts", False)))
+        mini_var = tk.BooleanVar(value=bool(self.cfg.get("mini", False)))
+        plot_var = tk.BooleanVar(value=bool(self.cfg.get("plot", True)))
         checks2 = tk.Frame(frm, bg=bg)
         checks2.grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 8))
         for i, (text, var) in enumerate((("答完自动粘贴", paste_var),
@@ -2054,7 +2230,11 @@ class App:
                                         ("记住窗口位置", pos_var),
                                         ("关窗缩到托盘", tray_var),
                                         ("开机自启", boot_var),
-                                        ("启动查更新", upd_var))):
+                                        ("启动查更新", upd_var),
+                                        ("剪贴板自动作答", watch_var),
+                                        ("答完自动朗读", tts_var),
+                                        ("迷你答案条", mini_var),
+                                        ("函数图像按钮", plot_var))):
             tk.Checkbutton(checks2, text=text, variable=var, bg=bg, fg=UI["dim"],
                            selectcolor=card, activebackground=bg,
                            activeforeground=UI["text"], bd=0, highlightthickness=0,
@@ -2083,6 +2263,13 @@ class App:
                    buttonbackground=card2, highlightthickness=1,
                    highlightbackground=UI["border"], font=(FONT, 9)
                    ).pack(side="left", padx=(6, 14))
+        tk.Label(look, text="考试日期", bg=bg, fg=UI["dim"],
+                 font=(FONT, 9)).pack(side="left")
+        exam_var = tk.StringVar(value=str(self.cfg.get("exam_date", "")))
+        tk.Entry(look, textvariable=exam_var, width=11, bg=card, fg=UI["text"],
+                 insertbackground=UI["text"], relief="flat", bd=0,
+                 highlightthickness=1, highlightbackground=UI["border"],
+                 font=(FONT, 9)).pack(side="left", padx=(6, 14))
         tk.Label(look, text="不透明度 %", bg=bg, fg=UI["dim"],
                  font=(FONT, 9)).pack(side="left")
         op_var = tk.StringVar(value=str(self.cfg.get("opacity", 100)))
@@ -2279,6 +2466,11 @@ class App:
             # 托盘开关只在下次启动生效（托盘线程已经起来了）
             self.cfg["ocr_quality"] = (
                 "high" if qual_var.get().startswith("高精度") else "standard")
+            self.cfg["watch_clip"] = bool(watch_var.get())
+            self.cfg["tts"] = bool(tts_var.get())
+            self.cfg["mini"] = bool(mini_var.get())
+            self.cfg["plot"] = bool(plot_var.get())
+            self.cfg["exam_date"] = (exam_var.get() or "").strip()
             cfg_mod.save(self.cfg)
             self.topmost = self.cfg["always_on_top"]
             try:
@@ -2304,6 +2496,185 @@ class App:
             win.grab_set()
         except Exception:  # noqa: BLE001
             pass
+
+
+    # ------------------------------------------------ v2.6：纯文字 / 窗口 / 浮窗
+    def solve_text(self):
+        """纯文字直答：剪贴板里已经是题目文字时，跳过截图和 OCR。"""
+        text = capture.clipboard_text().strip()
+        if not text:
+            self.set_status("剪贴板里没有文字 · 先复制题目文字（Ctrl+C）")
+            self._beep("warn")
+            return
+        if len(text) < 8:
+            self.set_status(f"剪贴板文字只有 {len(text)} 个字符，不像一道题")
+            self._beep("warn")
+            return
+        if self.busy:
+            return
+        self.set_status("纯文字模式…")
+        self._start_text(text)
+
+    def _start_text(self, text: str):
+        self.busy = True
+        self._set_buttons(False)
+        self._set_pulse(True)
+        cfg = self._current_cfg()
+
+        def emit(kind, payload):
+            self.q.put((kind, payload))
+
+        def work():
+            try:
+                payload = run_pipeline(None, cfg, emit, raw_text=text)
+            except Exception:  # noqa: BLE001
+                payload = {"ok": False, "stage": "crash",
+                           "error": traceback.format_exc()[-900:]}
+            self.q.put(("finish", payload))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _start_clip_watch(self):
+        try:
+            self._clip_seq = capture.clipboard_sequence()
+        except Exception:  # noqa: BLE001
+            self._clip_seq = 0
+        self.log("剪贴板监听已开：截图进剪贴板就自动作答（Ctrl+Alt+T 仍可纯文字作答）")
+        self._clip_tick()
+
+    def _clip_tick(self):
+        try:
+            if not self.root.winfo_exists():
+                return
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            seq = capture.clipboard_sequence()
+            if seq and seq != self._clip_seq:
+                self._clip_seq = seq
+                if not self.busy and capture.clipboard_has_image():
+                    img = capture.clipboard_image()
+                    if img is not None and img.size[0] > 120 and img.size[1] > 60:
+                        self._auto_from_clip(img)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.root.after(700, self._clip_tick)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _auto_from_clip(self, img):
+        # 只在指定窗口里自动作答（默认空 = 任何窗口），避免聊天截图误触发
+        allow = [t.strip() for t in str(self.cfg.get("watch_titles") or "").split(",")
+                 if t.strip()]
+        if allow:
+            title = capture.window_title(capture.foreground_window())
+            if not any(t.lower() in title.lower() for t in allow):
+                self.log(f"剪贴板有新图，但前台是「{title[:24]}」，跳过")
+                return
+        self.prev_hwnd = capture.foreground_window()
+        path = self._shot_path()
+        img.save(path)
+        self.last_image = img
+        self.last_image_path = str(path)
+        self.set_status("剪贴板截图 → 作答中…")
+        self._run_path(path)
+
+    def capture_window_menu(self):
+        wins = capture.list_windows()
+        if not wins:
+            self.set_status("没找到可截图的窗口")
+            return
+        menu = tk.Menu(self.root, tearoff=0, bg=UI["card"], fg=UI["text"],
+                       activebackground=UI["accent"], activeforeground="#ffffff",
+                       bd=0)
+        for hwnd, title in wins[:18]:
+            menu.add_command(label=title[:46],
+                             command=lambda h=hwnd, t=title: self._shot_window(h, t))
+        try:
+            menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _shot_window(self, hwnd: int, title: str):
+        if self.busy:
+            return
+        img = capture.grab_window(hwnd)
+        if img is None:
+            self.set_status(f"抓不到「{title[:18]}」的画面（可能已最小化）")
+            self._beep("warn")
+            return
+        self.prev_hwnd = capture.foreground_window()
+        self.last_image = img
+        path = self._shot_path()
+        img.save(path)
+        self.last_image_path = str(path)
+        self.log(f"抓取窗口「{title[:28]}」→ {img.size[0]}×{img.size[1]}")
+        self._run_path(path)
+
+    def toggle_mini(self):
+        if self.mini is not None:
+            self.mini.destroy()
+            self.mini = None
+            self.log("迷你答案条已关")
+            return
+        self.mini = MiniBar(self.root, UI, self.copy_answer, self.toggle_mini)
+        if self.last_payload:
+            res = self.last_payload.get("result")
+            if res is not None:
+                label, key = CONF_CHIP.get(res.confidence, ("", "accent"))
+                self.mini.set_text(f"{res.fill or res.answer}", key)
+        self.log("迷你答案条已开（拖动可移动，双击复制，✕ 关闭）")
+
+    def speak_answer(self):
+        if not self.last_payload:
+            self.set_status("还没有答案可读")
+            return
+        res = self.last_payload.get("result")
+        text = (res.fill or res.answer) if res is not None else ""
+        if not text:
+            return
+        ok = extras.speak(f"答案是 {text}", self.cfg.get("tts_lang", "zh"))
+        self.set_status("🔊 正在朗读…" if ok else "朗读失败（系统语音不可用）")
+
+    def show_plot(self):
+        if not self.last_payload:
+            return
+        text = self.last_payload.get("text") or ""
+        expr = plotter.extract_function(text)
+        if not expr:
+            self.set_status("题目里没找到 f(x)=… / y=… 形式的函数")
+            return
+        img = plotter.plot_function(expr)
+        if img is None:
+            self.set_status("这个函数画不出来（表达式可能带 OCR 噪声）")
+            return
+        self.plot_img = img
+        d = ROOT / "_tmp"
+        try:
+            d.mkdir(exist_ok=True)
+            path = d / "plot.png"
+            img.save(path)
+        except Exception:  # noqa: BLE001
+            path = Path(tempfile.gettempdir()) / "screenqa_plot.png"
+            img.save(path)
+        top = tk.Toplevel(self.root)
+        top.title("函数图像")
+        top.configure(bg=UI["bg"])
+        apply_icon(top)
+        try:
+            top.transient(self.root)
+        except Exception:  # noqa: BLE001
+            pass
+        photo = tk.PhotoImage(file=str(path))
+        lbl = tk.Label(top, image=photo, bg=UI["bg"])
+        lbl.image = photo
+        lbl.pack(padx=12, pady=12)
+        tk.Label(top, text=f"y = {expr}  ·  零点已标出", bg=UI["bg"],
+                 fg=UI["dim"], font=("Microsoft YaHei UI", 9)).pack(pady=(0, 10))
 
     def _on_close(self):
         # 关窗口 = 缩到托盘（考试中手滑点 X 不会把程序关掉）；托盘菜单「退出」才真退出

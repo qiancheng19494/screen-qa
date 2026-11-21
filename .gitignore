@@ -40,3 +40,8 @@ errors.json
 _cli.log
 _startup_error.log
 _records_test.csv
+_test_*.pdf
+shots/
+_shot_*.png
+_plot*.png
+_desk.png
