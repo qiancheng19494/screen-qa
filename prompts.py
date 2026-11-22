@@ -139,8 +139,22 @@ MSG_LATEX_COPIED = "已复制 LaTeX。"
 MSG_QUEUE_EMPTY = "没有待重试的任务。"
 MSG_QUEUE_ADDED = "已存进待重试队列（本地），网络恢复后点「待重试」重跑。"
 MSG_QUEUE_RUN = "开始重跑待重试队列…"
-VERSION_LABEL = "v2.14"
+VERSION_LABEL = "v2.15"
 LBL["ok"] = ("开始作答", "Solve")
 LBL["cancel"] = ("取消", "Cancel")
 LBL["queue"] = ("待重试", "Queue")
 LBL_ALT_TITLE = "另一种解法"
+
+TRANSLATE_SYSTEM = """你是数学题目翻译。把用户给的英文数学题翻成简体中文，用于中文读者理解。
+
+要求：
+1. 公式保持原样（用 LaTeX 内联 $...$ 或纯文本均可），不要翻译变量名。
+2. 逐句翻译，不要总结、不要解题、不要加解释。
+3. 只输出译文本身。
+"""
+
+MSG_TRANSLATE_RUN = "正在把英文题目翻成中文…"
+LBL_EXCERPT = "题面"
+LBL_RECALC = "用这段重算"
+LBL_LEDGER = "账本"
+LBL_TRANSLATE = "翻译"

@@ -43,7 +43,10 @@ if str(ROOT) not in sys.path:
 import capture  # noqa: E402
 import prompts
 import config as cfg_mod  # noqa: E402
-import extras  # noqa: E402
+import extras
+import latexfmt
+import ledger
+from PIL import ImageTk  # noqa: E402
 import questions as qsplit  # noqa: E402
 import reader  # noqa: E402
 from deepseek_api import DeepSeekClient  # noqa: E402
@@ -464,6 +467,23 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
         except Exception:  # noqa: BLE001
             pass
     emit("log", f"识别完成（{rr.backend}，{len(rr.text)} 字，{rr.elapsed:.1f}s）")
+    pretty_q = latexfmt.pretty(rr.text)
+    translation = ""
+    if cfg.get("translate", True):
+        ascii_ratio = sum(ch.isascii() for ch in rr.text) / max(1, len(rr.text))
+        if (not cfg.get("translate_only_ascii", True)) or ascii_ratio > 0.6:
+            emit("log", prompts.MSG_TRANSLATE_RUN)
+            try:
+                client = DeepSeekClient(cfg["api_key"], cfg.get("base_url", cfg_mod.DEFAULTS["base_url"]),
+                                        cfg.get("model", cfg_mod.DEFAULTS["model"]),
+                                        int(cfg.get("timeout", 60)))
+                translation = client.chat(
+                    [{"role": "system", "content": prompts.TRANSLATE_SYSTEM},
+                     {"role": "user", "content": rr.text[:4000]}],
+                    temperature=0.0, max_tokens=900, model=cfg.get("model"),
+                ).strip()
+            except Exception as exc:  # noqa: BLE001
+                emit("log", f"翻译失败（不影响作答）：{exc}")
 
     key = _cache_key(rr.text, cfg)
 
@@ -484,6 +504,8 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
                         f"（省下 {sum(i.calls for i in items)} 次模型调用）")
             return {
                 "ok": True, "text": rr.text, "backend": rr.backend,
+                "pretty_q": latexfmt.pretty(rr.text),
+                "translation": str(hit.get("translation") or ""),
                 "read_elapsed": rr.elapsed, "result": items[0], "items": items,
                 "elapsed": time.time() - t0, "warnings": rr.warnings,
                 "cached": True, "cached_at": hit.get("ts", 0), "key": key,
@@ -554,6 +576,8 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
         "warnings": rr.warnings,
         "cached": False,
         "key": key,
+        "pretty_q": pretty_q,
+        "translation": translation,
     }
 
     # ---- 成功作答才写缓存（失败的不缓存，免得下次直接给出错误结论）
@@ -562,6 +586,7 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
         try:
             data = load_cache()
             data[key] = {"ts": time.time(), "text": rr.text[:4000],
+                         "translation": translation,
                          "items": [_res_to_dict(r) for r in items]}
             save_cache(data)
         except Exception:  # noqa: BLE001
@@ -972,7 +997,7 @@ class App:
         except Exception:  # noqa: BLE001
             self.font_scale = 1.0
         compact = bool(self.cfg.get("compact"))
-        place_bottom_right(root, 474, 655 if compact else 742)
+        place_bottom_right(root, 474, 759 if compact else 794)
         pos = str(self.cfg.get("last_pos") or "")
         if self.cfg.get("remember_pos") and re.match(r"^\d+x\d+[+-]\d+[+-]\d+$", pos):
             try:
@@ -1022,14 +1047,18 @@ class App:
         wrap.pack(fill="both", expand=True, padx=15, pady=(12, 10))
 
         # ---- 标题行
+        try:
+            self._banner_img = tk.PhotoImage(file=str(ROOT / "assets" / "banner.png"))
+            bn = tk.Label(wrap, image=self._banner_img, bg=UI["bg"], bd=0)
+            bn.pack(fill="x", pady=(0, 6))
+        except Exception:  # noqa: BLE001
+            pass
         head = tk.Frame(wrap, bg=bg)
         head.pack(fill="x")
         self.dot = tk.Label(head, text="●", bg=bg, fg=UI["accent"], font=(FONT, 11))
         self.dot.pack(side="left")
-        tk.Label(head, text=" 屏幕问答", bg=bg, fg=UI["text"],
-                 font=(FONT, 13, "bold")).pack(side="left")
-        tk.Label(head, text="DeepSeek", bg=bg, fg=UI["muted"],
-                 font=(FONT, 9)).pack(side="left", padx=(8, 0))
+        tk.Label(head, text=" 就绪可答题", bg=bg, fg=UI["muted"],
+                 font=(FONT, 9)).pack(side="left")
 
         self.lbl_gear = tk.Label(head, text="⚙", bg=bg, fg=UI["dim"],
                                  font=(FONT, 13), cursor="hand2")
@@ -1113,14 +1142,43 @@ class App:
                                  fg=UI["muted"], font=(FONT, 8))
         self.chk_hint.pack(side="left", padx=(8, 0))
 
+        # ---- 题面 / 翻译条（默认收起，点「题面」展开；可改字重算）
+        self.ex = tk.Frame(wrap, bg=UI["card2"], highlightbackground=UI["border"],
+                           highlightthickness=1)
+        ex_head = tk.Frame(self.ex, bg=UI["card2"])
+        ex_head.pack(fill="x", padx=12, pady=(8, 0))
+        tk.Label(ex_head, text="\u25ae \u9898\u9762\uff08\u53ef\u6539\uff09", bg=UI["card2"],
+                 fg=UI["dim"], font=(FONT, 9, "bold")).pack(side="left")
+        self.b_recalc = Pill(ex_head, prompts.LBL_RECALC, self.recalc_from_excerpt,
+                             kind="primary", width=88, height=26, font_size=9)
+        self.b_recalc.pack(side="right", padx=(6, 0))
+        self.ex_text = tk.Text(self.ex, wrap="word", bg=UI["card2"], fg=UI["text"],
+                               insertbackground=UI["text"], relief="flat", bd=0,
+                               highlightthickness=0, height=3,
+                               font=(FONT, max(8, round(int(self.cfg.get("font_size", 11))
+                                                        * self.font_scale) - 1)),
+                               padx=12, pady=6)
+        self.ex_text.pack(fill="x", padx=2)
+        self.tr_label = tk.Label(self.ex, text="", bg=UI["card2"], fg=UI["accent"],
+                                 justify="left", anchor="w", wraplength=430,
+                                 font=(FONT, max(8, round(int(self.cfg.get("font_size", 11))
+                                                          * self.font_scale) - 1)),
+                                 padx=12, pady=0)
+        self.tr_label.pack(fill="x", padx=2, pady=(0, 8))
+        self.ex_visible = False
+
         # ---- 详情
         det = tk.Frame(wrap, bg=UI["card2"], highlightbackground=UI["border"],
                        highlightthickness=1)
         det.pack(fill="both", expand=True)
+        self.det = det
         cap = tk.Frame(det, bg=UI["card2"])
         cap.pack(side="top", fill="x", padx=14, pady=(9, 0))
         tk.Label(cap, text="\u25ae \u7ed3\u679c\u4e0e\u63a8\u7406", bg=UI["card2"],
                  fg=UI["dim"], font=(FONT, 9, "bold")).pack(side="left")
+        self.b_ex = Pill(cap, prompts.LBL_EXCERPT, self.toggle_excerpt,
+                         kind="flat", width=44, height=22, font_size=9)
+        self.b_ex.pack(side="right")
         self.text = tk.Text(det, wrap="word", bg=UI["card2"], fg=UI["text"],
                             insertbackground=UI["text"], relief="flat", bd=0,
                             highlightthickness=0, cursor="arrow",
@@ -1172,26 +1230,26 @@ class App:
         # 第三行：函数图像 / 朗读 / 迷你浮窗
         bar3 = tk.Frame(cpad, bg=UI["card"])
         bar3.pack(fill="x", pady=(8, 0))
-        self.b_plot = Pill(bar3, prompts.L("plot"), self.show_plot, kind="ghost", width=48)
+        self.b_plot = Pill(bar3, prompts.L("plot"), self.show_plot, kind="ghost", width=44)
         self.b_plot.pack(side="left")
         self.b_plot.set_enabled(False)
-        self.b_speak = Pill(bar3, prompts.L("speak"), self.speak_answer, kind="ghost", width=48)
+        self.b_speak = Pill(bar3, prompts.L("speak"), self.speak_answer, kind="ghost", width=44)
         self.b_speak.pack(side="left", padx=(7, 0))
         self.b_speak.set_enabled(False)
-        self.b_mini = Pill(bar3, prompts.L("mini"), self.toggle_mini, kind="ghost", width=48)
+        self.b_mini = Pill(bar3, prompts.L("mini"), self.toggle_mini, kind="ghost", width=44)
         self.b_mini.pack(side="left", padx=(7, 0))
         self.b_follow = Pill(bar3, prompts.LBL_FOLLOWUP, self.ask_followup,
-                             kind="ghost", width=52)
+                             kind="ghost", width=48)
         self.b_follow.pack(side="left", padx=(7, 0))
         self.b_follow.set_enabled(False)
         self.b_recent = Pill(bar3, prompts.LBL_RECENT, self.recent_menu,
-                             kind="ghost", width=58)
+                             kind="ghost", width=54)
         self.b_recent.pack(side="left", padx=(7, 0))
         self.b_typed = Pill(bar3, prompts.TYPED_LABEL, self.ask_typed,
-                            kind="ghost", width=64)
+                            kind="ghost", width=58)
         self.b_typed.pack(side="left", padx=(7, 0))
         self.b_open = Pill(bar3, prompts.OPEN_LABEL, self.open_image,
-                           kind="ghost", width=60)
+                           kind="ghost", width=56)
         self.b_open.pack(side="left", padx=(7, 0))
 
         # 第四行：判卷 / 练一练 / 导出卡片 / 重复上次区域
@@ -2045,6 +2103,14 @@ class App:
                             bg=UI.get(key + "_bg", UI["card2"]))
         self.edge.configure(bg=UI.get(key, UI["accent"]))
         self._set_agree(res.agreement, UI.get(key, UI["accent"]))
+        # 题面（可改重算）+ 英文翻译，存进「题面」条
+        try:
+            self.set_excerpt(payload.get("pretty_q") or latexfmt.pretty(payload.get("text") or ""),
+                             payload.get("translation") or "")
+            if payload.get("translation") and not getattr(self, "ex_visible", False):
+                self.toggle_excerpt(True)     # 有译文时自动展开，省一次点击
+        except Exception:  # noqa: BLE001
+            pass
         self._today_count = (getattr(self, "_today_count", 0) or 0) + 1
         bits = [f"一致 {res.agreement:.0%}",
                 f"{sum(i.calls for i in items)} 次",
@@ -2988,6 +3054,141 @@ class App:
         else:
             self.note(f"更新检查失败：{info.get('error', '')[:120]}")
 
+
+    # ------------------------------------------------------------ 题面 / 翻译
+    def toggle_excerpt(self, force=None):
+        """展开/收起题面（可改字重算）与翻译。"""
+        want = (not self.ex_visible) if force is None else bool(force)
+        base = 759 if self.cfg.get("compact") else 794
+        if want:
+            self.ex.pack(fill="x", pady=(0, 8), before=self.det)
+            self.ex_visible = True
+            try:
+                _sh = capture.screen_size()[1]
+            except Exception:  # noqa: BLE001
+                _sh = 1080
+            place_bottom_right(self.root, 474, min(base + 150, _sh - 90))
+            try:
+                snap_bottom_right(self.root)
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            self.ex.pack_forget()
+            self.ex_visible = False
+            place_bottom_right(self.root, 474, base)
+            try:
+                snap_bottom_right(self.root)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def set_excerpt(self, pretty_q: str, translation: str = ""):
+        try:
+            self.ex_text.delete("1.0", "end")
+            self.ex_text.insert("1.0", pretty_q or "")
+            body = (translation or "").strip()
+            if len(body) > 120:
+                body = body[:120] + " …"
+            body = body.replace("\n", " / ")
+            self.tr_label.configure(
+                text=(prompts.LBL_TRANSLATE + "：" + body) if body else "")
+            self.tr_label.pack_forget()
+            if translation:
+                self.tr_label.pack(fill="x", padx=2, pady=(0, 8))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def recalc_from_excerpt(self):
+        """把（改过的）题面文字直接送去作答，不再截图。"""
+        try:
+            text = self.ex_text.get("1.0", "end").strip()
+        except Exception:  # noqa: BLE001
+            text = ""
+        if len(text) < 8:
+            self.set_status(prompts.MSG_TYPED_TOO_LITTLE if hasattr(prompts, "MSG_TYPED_TOO_LITTLE")
+                            else "题面太短了，先框一次题目或自己补两句")
+            return
+        self.toggle_excerpt(True)
+        self._start_text(text)
+
+
+    # ------------------------------------------------------------ 账本
+    def open_ledger(self):
+        """今日/累计 + 按模型 + 30 天柱状图，可导出 CSV。"""
+        try:
+            recs = cfg_mod.load_records(800)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("账本", f"读记录失败：{exc}")
+            return
+        stat = ledger.summarize(recs)
+        top = tk.Toplevel(self.root)
+        top.title("账本 · 今日与近 30 天")
+        top.configure(bg=UI["bg"])
+        top.geometry("660x560")
+        top.transient(self.root)
+        head = tk.Label(top, bg=UI["bg"], fg=UI["text"], anchor="w", justify="left",
+                        font=(FONT, 11, "bold"),
+                        text=f"今日 {stat['today_n']} 题 · ¥{stat['today_cost']:.4f}"
+                             f"    累计 {stat['total_n']} 题 · ¥{stat['total_cost']:.4f}")
+        head.pack(fill="x", padx=16, pady=(14, 8))
+        try:
+            img = ledger.draw_chart(recs)
+        except Exception:  # noqa: BLE001
+            img = None
+        if img is not None:
+            self._chart_img = ImageTk.PhotoImage(img)
+            tk.Label(top, image=self._chart_img, bg=UI["bg"], bd=0).pack(padx=12, pady=(0, 8))
+        else:
+            tk.Label(top, text="还没有作答记录（先做一道题）", bg=UI["bg"], fg=UI["dim"],
+                     font=(FONT, 10)).pack(padx=16, pady=(0, 8))
+        rows = list(stat["by_model"].items())
+        if rows:
+            box = tk.Frame(top, bg=UI["card2"], highlightbackground=UI["border"],
+                           highlightthickness=1)
+            box.pack(fill="x", padx=16)
+            for name, m in rows[:6]:
+                line = f"{name}：{m['n']} 次 · {m['tok']} tokens · ¥{m['cost']:.4f}"
+                tk.Label(box, text=line, bg=UI["card2"], fg=UI["text"], anchor="w",
+                         font=(FONT, 10)).pack(fill="x", padx=12, pady=3)
+        btns = tk.Frame(top, bg=UI["bg"])
+        btns.pack(fill="x", padx=16, pady=12)
+        Pill(btns, "导出 CSV", lambda: self._export_ledger_csv(), kind="primary",
+             height=30, font_size=9).pack(side="left")
+        Pill(btns, "关闭", top.destroy, kind="ghost", height=30, font_size=9).pack(side="left", padx=(8, 0))
+
+    def _export_ledger_csv(self):
+        try:
+            n = cfg_mod.export_records_csv()
+            self.set_status(f"已导出 {n} 条记录到 records.csv")
+            messagebox.showinfo("账本", f"已导出 {n} 条记录：\n{ROOT / 'records.csv'}")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("账本", f"导出失败：{exc}")
+
+    # ------------------------------------------------------------ 启动画面
+    def show_splash(self):
+        """1.1 秒的品牌启动画面（可在设置里关掉）。"""
+        if not self.cfg.get("splash", True):
+            return
+        try:
+            sp = tk.Toplevel(self.root)
+            sp.overrideredirect(True)
+            sp.configure(bg=UI["card"])
+            sp.attributes("-topmost", True)
+            w, h = 360, 140
+            sp.geometry(f"{w}x{h}+{(self.root.winfo_screenwidth() - w) // 2}"
+                        f"+{(self.root.winfo_screenheight() - h) // 2}")
+            box = tk.Frame(sp, bg=UI["card"], highlightbackground=UI["border"],
+                           highlightthickness=1)
+            box.pack(fill="both", expand=True)
+            tk.Label(box, text="屏幕问答", bg=UI["card"], fg=UI["text"],
+                     font=(FONT, 18, "bold")).pack(pady=(28, 2))
+            tk.Label(box, text="截屏 · 读题 · 作答 · 验算", bg=UI["card"], fg=UI["dim"],
+                     font=(FONT, 10)).pack()
+            tk.Label(box, text=f"v{prompts.VERSION_LABEL.lstrip('v')}", bg=UI["card"],
+                     fg=UI["accent"], font=(FONT, 9)).pack(pady=(10, 0))
+            sp.after(1100, sp.destroy)
+        except Exception:  # noqa: BLE001
+            pass
+
     # ------------------------------------------------------------ 托盘
     def _setup_tray(self):
         self.tray_ok = False
@@ -3408,6 +3609,8 @@ class App:
         Pill(row7, "余额", lambda: self.check_balance(silent=False), kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, prompts.L("queue"), self.retry_queue, kind="flat",
+             height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row7, prompts.LBL_LEDGER, self.open_ledger, kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
 
         msg = tk.Label(frm, text="Key 获取：platform.deepseek.com → API keys",
@@ -3875,6 +4078,10 @@ def main():
 
     root = tk.Tk()
     app = App(root)
+    try:
+        app.show_splash()
+    except Exception:  # noqa: BLE001
+        pass
     if args.auto_cont:
         root.after(900, app.start_continuous)
     root.mainloop()

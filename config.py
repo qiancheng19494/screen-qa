@@ -72,6 +72,9 @@ DEFAULTS = {
     "hotkey_repeat": "ctrl+alt+shift+q",
     "watch_clip": False,
     "clip_fallback": True,
+    "splash": True,
+    "translate": True,
+    "translate_only_ascii": True,
     "autocrop": True,
     "budget_day": 1.0,
     "adaptive": True,        # 自适应采样：单次作答 + 验算通过就不再问
@@ -110,7 +113,7 @@ def load() -> dict:
                "dedupe", "cache", "multi", "fast", "reasoner", "refocus",
                "auto_paste", "auto_enter", "dual", "vision_first",
                "remember_pos", "check_update", "tray", "autostart",
-               "watch_clip", "tts", "mini", "plot", "clip_fallback",
+               "watch_clip", "tts", "mini", "plot", "clip_fallback", "translate", "translate_only_ascii", "splash",
         "adaptive", "stream", "fuzzy_cache", "cross_check", "compact"):
         if _k in cfg:
             cfg[_k] = bool(cfg.get(_k, DEFAULTS[_k]))

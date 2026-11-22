@@ -451,3 +451,34 @@ MIT
 python tools/make_snapshot.py --limit 8   # 存快照（会花少量费用，一次就够）
 python tools/regress_offline.py           # 回放：只验判定与验算逻辑
 ```
+
+---
+
+## 界面一览（v2.15）
+
+| 作答结果 | 多函数绘图 |
+|---|---|
+| ![主窗](docs/screenshots/main-answer.png) | ![绘图](docs/screenshots/plot-multi.png) |
+
+| 30 天账本 | 设置面板 |
+|---|---|
+| ![账本](docs/screenshots/ledger-30d.png) | ![设置](docs/screenshots/settings.png) |
+
+## 术语对照（本项目 vs 常见叫法）
+
+| 本项目用词 | 高校/平台叫法 | 含义 |
+|---|---|---|
+| 框选 | snip / capture region | 圈出一块屏幕区域并截图 |
+| 题面 | problem statement / 题干 | 从图里读出来的题目原文 |
+| 填入答案 | answer box value | 能直接敲进 MyMathLab 输入框的字符串 |
+| 一致度 | agreement | 多次采样里投给同一答案的比例 |
+| 代入验算 | substitution check | 把答案代回原式核对（本地算，不花钱） |
+| 双模型互检 | dual-model cross-check | `chat` 投票 + `reasoner` 独立求解对照 |
+| 抽样 | sample | 一次独立的模型作答（3 抽样 = 问 3 遍取多数） |
+| 待重试队列 | retry queue | 失败/断网的题排队，稍后一键重跑 |
+| 绿/黄/红 | confidence tier | 高置信度 / 需核对 / 存疑 |
+
+## 致谢
+
+- 交互思路参考了朋友的 [SpellCardHomework / 符卡作业簿](https://github.com/Jerry9335/SpellCardHomework)（MIT）：LaTeX→符号渲染、英文题翻译、"摘录可改→改完重算"的三段式、用量账本、启动横幅。我们按其思路重写实现，未复用其代码与素材。
+- **没有**照搬它的 CDP 全自动网页答题与一机一码授权：前者涉及"代交作业"边界且要引入 websocket 依赖，后者与 MIT 免费发布冲突。
