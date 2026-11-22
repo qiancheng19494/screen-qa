@@ -3098,7 +3098,7 @@ class App:
                 text = (f"余额 {info.get('amount', 0):.2f} {info.get('currency', 'CNY')}"
                         f"{left}\n今日 {stats['count']} 题 · 约 ¥{stats['cost']:.4f} · "
                         f"{stats['tokens_in'] + stats['tokens_out']} tokens")
-                self.q.put(("log", f"💰 {text.replace(chr(10), ' · ')}"))
+                self.q.put(("log", f"💰 {text.split(chr(10))[0]}"))
                 if not silent:
                     self.root.after(0, lambda: messagebox.showinfo("余额与今日花费", text))
             except Exception as exc:  # noqa: BLE001
