@@ -138,6 +138,36 @@ CONF_CHIP = {
 
 
 # ---------------------------------------------------------------- 小工具
+def _hex2rgb(h: str):
+    h = (h or "").lstrip("#")
+    if len(h) != 6:
+        return (0, 0, 0)
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _gradient(parent, height=2, c1=None, c2=None):
+    """一条水平渐变的细线，纯装饰。"""
+    c1 = c1 or UI["accent"]
+    c2 = c2 or UI["bg"]
+    cv = tk.Canvas(parent, height=height, bg=UI["bg"], highlightthickness=0, bd=0)
+
+    def draw(_ev=None):
+        w = cv.winfo_width()
+        if w <= 1:
+            cv.after(80, draw)
+            return
+        cv.delete("all")
+        a, b = _hex2rgb(c1), _hex2rgb(c2)
+        for x in range(w):
+            t = x / max(1, w - 1)
+            col = "#%02x%02x%02x" % tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+            cv.create_line(x, 0, x, height, fill=col)
+
+    cv.bind("<Configure>", draw)
+    cv.after(90, draw)
+    return cv
+
+
 def place_bottom_right(root: tk.Tk, w: int, h: int, margin: int = 28) -> None:
     """把窗口摆到工作区右下角（避开任务栏）。"""
     x = y = None
@@ -1002,6 +1032,10 @@ class App:
         self.lbl_pin.pack(side="right", padx=(0, 10))
         self.lbl_pin.bind("<Button-1>", lambda e: self.toggle_topmost())
 
+        # 顶部渐变强调线：让界面有个"标题栏"的层次
+        self.grad = _gradient(wrap)
+        self.grad.pack(fill="x", pady=(9, 0))
+
         # ---- 答案卡
         card = tk.Frame(wrap, bg=UI["card"], highlightbackground=UI["border"],
                         highlightthickness=1)
@@ -1025,6 +1059,12 @@ class App:
                              font=(FONT, 9), anchor="w", justify="left",
                              wraplength=268)
         self.meta.pack(side="left", padx=(9, 0))
+        # 一致度细条：比"一致 100%"这行字更直观
+        self.agree = tk.Canvas(inner, height=4, bg=UI["card"],
+                               highlightthickness=0, bd=0)
+        self.agree.pack(fill="x", pady=(9, 0))
+        self._agree_ratio = 0.0
+        self._agree_color = UI["border"]
         self.card = card
         card.bind("<Configure>", self._on_card_resize)
 
@@ -1035,7 +1075,7 @@ class App:
         self.reader_var = tk.StringVar(value=self._reader_label())
         self.reader_box = tk.OptionMenu(opts, self.reader_var, *READER_LABELS,
                                         command=lambda *_: self._on_reader_change())
-        self._style_optionmenu(self.reader_box, width=13)
+        self._style_optionmenu(self.reader_box, width=15)
         self.reader_box.pack(side="left", padx=(6, 10))
 
         tk.Label(opts, text="模型", bg=bg, fg=UI["muted"], font=(FONT, 9)).pack(side="left")
@@ -1044,7 +1084,7 @@ class App:
                                      MODEL_CHOICES[0][0]))
         self.model_box = tk.OptionMenu(opts, self.model_var,
                                        *[lbl for lbl, _ in MODEL_CHOICES])
-        self._style_optionmenu(self.model_box, width=14)
+        self._style_optionmenu(self.model_box, width=12)
         self.model_box.pack(side="left", padx=(6, 10))
 
         opts2 = tk.Frame(wrap, bg=bg)
@@ -1068,6 +1108,10 @@ class App:
         det = tk.Frame(wrap, bg=UI["card2"], highlightbackground=UI["border"],
                        highlightthickness=1)
         det.pack(fill="both", expand=True)
+        cap = tk.Frame(det, bg=UI["card2"])
+        cap.pack(side="top", fill="x", padx=14, pady=(9, 0))
+        tk.Label(cap, text="\u25ae \u7ed3\u679c\u4e0e\u63a8\u7406", bg=UI["card2"],
+                 fg=UI["dim"], font=(FONT, 9, "bold")).pack(side="left")
         self.text = tk.Text(det, wrap="word", bg=UI["card2"], fg=UI["text"],
                             insertbackground=UI["text"], relief="flat", bd=0,
                             highlightthickness=0, cursor="arrow",
@@ -1091,29 +1135,34 @@ class App:
                                 font=(FONT, 10, "bold"), spacing1=8, spacing3=3)
         self.text.bind("<Key>", self._block_keys)
 
-        # ---- 操作
-        bar = tk.Frame(wrap, bg=bg)
-        bar.pack(fill="x", pady=(10, 0), before=det)
+        # ---- 操作（包在一张卡片里，视觉上成组）
+        controls = tk.Frame(wrap, bg=UI["card"], highlightbackground=UI["border"],
+                            highlightthickness=1)
+        controls.pack(fill="x", pady=(2, 9), before=det)
+        cpad = tk.Frame(controls, bg=UI["card"])
+        cpad.pack(fill="x", padx=10, pady=10)
+        bar = tk.Frame(cpad, bg=UI["card"])
+        bar.pack(fill="x")
         self.b_region = Pill(bar, prompts.L("capture"), self.shot_region, kind="primary",
-                             bold=True, width=104)
+                             bold=True, width=96)
         self.b_region.pack(side="left")
-        self.b_full = Pill(bar, prompts.L("full"), self.shot_full, kind="ghost", width=64)
+        self.b_full = Pill(bar, prompts.L("full"), self.shot_full, kind="ghost", width=60)
         self.b_full.pack(side="left", padx=(7, 0))
-        self.b_paste = Pill(bar, prompts.L("paste"), self.paste_image, kind="ghost", width=64)
+        self.b_paste = Pill(bar, prompts.L("paste"), self.paste_image, kind="ghost", width=58)
         self.b_paste.pack(side="left", padx=(7, 0))
-        self.b_copy = Pill(bar, prompts.L("copy"), self.copy_answer, kind="ghost", width=84)
+        self.b_copy = Pill(bar, prompts.L("copy"), self.copy_answer, kind="ghost", width=76)
         self.b_copy.pack(side="right")
         self.b_copy.set_enabled(False)
-        self.b_steps = Pill(bar, prompts.L("steps"), self.copy_steps, kind="ghost", width=52)
+        self.b_steps = Pill(bar, prompts.L("steps"), self.copy_steps, kind="ghost", width=54)
         self.b_steps.pack(side="right", padx=(0, 7))
         self.b_steps.set_enabled(False)
-        self.b_bad = Pill(bar, prompts.L("bad"), self.mark_error, kind="ghost", width=52)
+        self.b_bad = Pill(bar, prompts.L("bad"), self.mark_error, kind="ghost", width=54)
         self.b_bad.pack(side="right", padx=(0, 7))
         self.b_bad.set_enabled(False)
 
         # 第三行：函数图像 / 朗读 / 迷你浮窗
-        bar3 = tk.Frame(wrap, bg=bg)
-        bar3.pack(fill="x", pady=(8, 0), before=det)
+        bar3 = tk.Frame(cpad, bg=UI["card"])
+        bar3.pack(fill="x", pady=(8, 0))
         self.b_plot = Pill(bar3, prompts.L("plot"), self.show_plot, kind="ghost", width=58)
         self.b_plot.pack(side="left")
         self.b_plot.set_enabled(False)
@@ -1129,38 +1178,38 @@ class App:
         self.b_recent = Pill(bar3, prompts.LBL_RECENT, self.recent_menu,
                              kind="ghost", width=62)
         self.b_recent.pack(side="left", padx=(7, 0))
-        tk.Label(bar3, text="Ctrl+Alt+T 文字", bg=bg, fg=UI["muted"],
+        tk.Label(bar3, text="Ctrl+Alt+T 文字", bg=UI["card"], fg=UI["muted"],
                  font=(FONT, 8)).pack(side="right")
 
         # 一屏多题时，这里会冒出「复制第 N 题」按钮；空的时候不占高度
         self.multi_bar = tk.Frame(wrap, bg=bg)
-        self.multi_bar.pack(fill="x", before=bar)
+        self.multi_bar.pack(fill="x", before=controls)
 
         # 最近几条答案：考试时往回翻、重新粘，不用回到原题
         self.hist_bar = tk.Frame(wrap, bg=bg)
-        self.hist_bar.pack(fill="x", before=bar)
+        self.hist_bar.pack(fill="x", before=controls)
 
-        bar2 = tk.Frame(wrap, bg=bg)
-        bar2.pack(fill="x", pady=(8, 0), before=det)
+        bar2 = tk.Frame(cpad, bg=UI["card"])
+        bar2.pack(fill="x", pady=(8, 0))
         self.b_cont = Pill(bar2, prompts.L("cont"), self.toggle_continuous,
-                           kind="success", bold=True, width=118)
+                           kind="success", bold=True, width=108)
         self.b_cont.pack(side="left")
-        self.region_lbl = tk.Label(bar2, text=self._region_text(), bg=bg,
+        self.region_lbl = tk.Label(bar2, text=self._region_text(), bg=UI["card"],
                                    fg=UI["muted"], font=(FONT, 9), cursor="hand2")
         self.region_lbl.pack(side="left", padx=(9, 0))
         self.region_lbl.bind("<Button-1>", lambda e: self.region_menu())
         self.interval_lbl = tk.Label(bar2, text=f"每 {self.cfg.get('interval', 3)} 秒",
-                                     bg=bg, fg=UI["muted"], font=(FONT, 9),
+                                     bg=UI["card"], fg=UI["muted"], font=(FONT, 9),
                                      cursor="hand2")
         self.interval_lbl.pack(side="left", padx=(10, 0))
         self.interval_lbl.bind("<Button-1>", lambda e: self.open_settings())
         # 右侧：历史面板 / 重算（把这两个从主按钮行挪出来，主行才不会挤爆）
-        self.b_redo = Pill(bar2, prompts.L("redo"), self.redo, kind="ghost", width=58)
+        self.b_redo = Pill(bar2, prompts.L("redo"), self.redo, kind="ghost", width=52)
         self.b_redo.pack(side="right")
         self.b_redo.set_enabled(False)
-        self.b_hist = Pill(bar2, prompts.L("history"), self.open_history, kind="ghost", width=54)
+        self.b_hist = Pill(bar2, prompts.L("history"), self.open_history, kind="ghost", width=50)
         self.b_hist.pack(side="right", padx=(0, 7))
-        self.b_win = Pill(bar2, prompts.L("win"), self.capture_window_menu, kind="ghost", width=58)
+        self.b_win = Pill(bar2, prompts.L("win"), self.capture_window_menu, kind="ghost", width=52)
         self.b_win.pack(side="right", padx=(0, 7))
 
         # ---- 状态栏
@@ -1169,6 +1218,9 @@ class App:
         self.status = tk.Label(st, text="就绪", bg=UI["card2"], fg=UI["muted"],
                                font=(FONT, 9), anchor="w")
         self.status.pack(side="left", padx=12, pady=4)
+        self.st_right = tk.Label(st, text="", bg=UI["card2"], fg=UI["muted"],
+                                 font=(FONT, 8), anchor="e")
+        self.st_right.pack(side="right", padx=12)
 
     @staticmethod
     def _style_optionmenu(menu_btn, width=12):
@@ -1186,6 +1238,41 @@ class App:
 
     def _on_card_resize(self, ev):
         self.ans.configure(wraplength=max(200, ev.width - 34))
+        try:
+            self._set_agree(self._agree_ratio, self._agree_color)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _set_agree(self, ratio, color):
+        """画一致度细条：底色全宽、彩色部分按比例。"""
+        self._agree_ratio = float(ratio or 0.0)
+        self._agree_color = color or UI["border"]
+        if not hasattr(self, "agree"):
+            return
+        w = self.agree.winfo_width()
+        if w <= 1:
+            w = 360
+        self.agree.delete("all")
+        self.agree.create_rectangle(0, 1, w, 3, fill=UI["border"], outline="")
+        span = max(0, min(1.0, self._agree_ratio)) * w
+        if span >= 1:
+            self.agree.create_rectangle(0, 1, span, 3, fill=self._agree_color, outline="")
+
+    def _refresh_status_meta(self):
+        bits = []
+        try:
+            bits.append(str(self.model_var.get()))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            bits.append("采样 " + str(self.samples_var.get()))
+        except Exception:  # noqa: BLE001
+            pass
+        n = getattr(self, "_today_count", 0)
+        if n:
+            bits.append(f"今日 {n} 题")
+        if hasattr(self, "st_right"):
+            self.st_right.configure(text=" · ".join(bits))
 
     def _block_keys(self, ev):
         if ev.state & 0x4 and ev.keysym.lower() in ("c", "a", "insert"):
@@ -1217,7 +1304,19 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    def note(self, msg: str):
+        """只写 _app.log，不打断状态栏（后台噪声用）。"""
+        try:
+            with open(ROOT / "_app.log", "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+        except Exception:  # noqa: BLE001
+            pass
+
     def set_status(self, msg: str):
+        try:
+            self._refresh_status_meta()
+        except Exception:  # noqa: BLE001
+            pass
         self._status_base = msg
         self.status.configure(text=msg + (self._dots() if self.busy else ""))
 
@@ -1800,6 +1899,7 @@ class App:
             self.ans.configure(text="这一次没成功", fg=UI["red"])
             self.chip.configure(text="⚠ 出错", bg=UI["red_bg"], fg=UI["red"])
             self.edge.configure(bg=UI["red"])
+            self._set_agree(0.0, UI["red"])
             self.meta.configure(text=str(payload.get("stage", "")))
             self._flash(UI["red"])
             self.text.delete("1.0", "end")
@@ -1815,6 +1915,7 @@ class App:
             self.ans.configure(text="DeepSeek 调用失败", fg=UI["red"])
             self.chip.configure(text="🔴 未作答", bg=UI["red_bg"], fg=UI["red"])
             self.edge.configure(bg=UI["red"])
+            self._set_agree(0.0, UI["red"])
             self.meta.configure(text=str(res.error)[:60])
             self._flash(UI["red"])
             self.text.delete("1.0", "end")
@@ -1869,6 +1970,8 @@ class App:
         self.chip.configure(text=label, fg=UI.get(key, UI["muted"]),
                             bg=UI.get(key + "_bg", UI["card2"]))
         self.edge.configure(bg=UI.get(key, UI["accent"]))
+        self._set_agree(res.agreement, UI.get(key, UI["accent"]))
+        self._today_count = (getattr(self, "_today_count", 0) or 0) + 1
         bits = [f"一致 {res.agreement:.0%}",
                 f"{sum(i.calls for i in items)} 次",
                 f"{payload['elapsed']:.1f}s",
@@ -2657,7 +2760,7 @@ class App:
         elif info.get("ok"):
             self.log(f"已是最新版本（{info.get('latest')}）")
         else:
-            self.log(f"更新检查失败：{info.get('error', '')[:120]}")
+            self.note(f"更新检查失败：{info.get('error', '')[:120]}")
 
     # ------------------------------------------------------------ 托盘
     def _setup_tray(self):
