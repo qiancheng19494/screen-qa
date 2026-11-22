@@ -25,7 +25,7 @@ from pathlib import Path
 
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog
 
 def _app_dir() -> "Path":
     """打包成 exe 后，程序目录 = exe 所在目录；源码运行时 = 本文件目录。"""
@@ -852,7 +852,12 @@ class MiniBar:
             self.lbl.configure(text=text[:120] or "等待作答…")
             self.dot.configure(fg=self.ui.get(key, self.ui["accent"]))
             need = tkfont.Font(font=self.lbl.cget("font")).measure(text[:120])
-            self.top.geometry(f"{min(760, max(240, need + 90))}x40")
+            w = min(760, max(240, need + 90))
+            x, y = capture.cursor_pos()
+            sw, sh = capture.screen_size()
+            x = max(8, min(sw - w - 8, x + 18))
+            y = max(8, min(sh - 60, y + 24))
+            self.top.geometry(f"{w}x40+{x}+{y}")
         except Exception:  # noqa: BLE001
             pass
 
@@ -1150,7 +1155,7 @@ class App:
         self.b_region = Pill(bar, prompts.L("capture"), self.shot_region, kind="primary",
                              bold=True, width=96)
         self.b_region.pack(side="left")
-        self.b_full = Pill(bar, prompts.L("full"), self.shot_full, kind="ghost", width=60)
+        self.b_full = Pill(bar, prompts.L("full"), self.shot_full, kind="ghost", width=70)
         self.b_full.pack(side="left", padx=(7, 0))
         self.b_paste = Pill(bar, prompts.L("paste"), self.paste_image, kind="ghost", width=58)
         self.b_paste.pack(side="left", padx=(7, 0))
@@ -1167,23 +1172,27 @@ class App:
         # 第三行：函数图像 / 朗读 / 迷你浮窗
         bar3 = tk.Frame(cpad, bg=UI["card"])
         bar3.pack(fill="x", pady=(8, 0))
-        self.b_plot = Pill(bar3, prompts.L("plot"), self.show_plot, kind="ghost", width=58)
+        self.b_plot = Pill(bar3, prompts.L("plot"), self.show_plot, kind="ghost", width=48)
         self.b_plot.pack(side="left")
         self.b_plot.set_enabled(False)
-        self.b_speak = Pill(bar3, prompts.L("speak"), self.speak_answer, kind="ghost", width=58)
+        self.b_speak = Pill(bar3, prompts.L("speak"), self.speak_answer, kind="ghost", width=48)
         self.b_speak.pack(side="left", padx=(7, 0))
         self.b_speak.set_enabled(False)
-        self.b_mini = Pill(bar3, prompts.L("mini"), self.toggle_mini, kind="ghost", width=58)
+        self.b_mini = Pill(bar3, prompts.L("mini"), self.toggle_mini, kind="ghost", width=48)
         self.b_mini.pack(side="left", padx=(7, 0))
         self.b_follow = Pill(bar3, prompts.LBL_FOLLOWUP, self.ask_followup,
-                             kind="ghost", width=58)
+                             kind="ghost", width=52)
         self.b_follow.pack(side="left", padx=(7, 0))
         self.b_follow.set_enabled(False)
         self.b_recent = Pill(bar3, prompts.LBL_RECENT, self.recent_menu,
-                             kind="ghost", width=62)
+                             kind="ghost", width=58)
         self.b_recent.pack(side="left", padx=(7, 0))
-        tk.Label(bar3, text="Ctrl+Alt+T 文字", bg=UI["card"], fg=UI["muted"],
-                 font=(FONT, 8)).pack(side="right")
+        self.b_typed = Pill(bar3, prompts.TYPED_LABEL, self.ask_typed,
+                            kind="ghost", width=64)
+        self.b_typed.pack(side="left", padx=(7, 0))
+        self.b_open = Pill(bar3, prompts.OPEN_LABEL, self.open_image,
+                           kind="ghost", width=60)
+        self.b_open.pack(side="left", padx=(7, 0))
 
         # 第四行：判卷 / 练一练 / 导出卡片 / 重复上次区域
         bar4 = tk.Frame(cpad, bg=UI["card"])
@@ -1200,6 +1209,14 @@ class App:
                            kind="ghost", width=58)
         self.b_card.pack(side="left", padx=(7, 0))
         self.b_card.set_enabled(False)
+        self.b_latex = Pill(bar4, prompts.LATEX_LABEL, self.copy_latex,
+                            kind="ghost", width=74)
+        self.b_latex.pack(side="left", padx=(7, 0))
+        self.b_latex.set_enabled(False)
+        self.b_alt = Pill(bar4, prompts.ALT_LABEL, self.alt_method,
+                          kind="ghost", width=62)
+        self.b_alt.pack(side="left", padx=(7, 0))
+        self.b_alt.set_enabled(False)
         self.b_repeat = Pill(bar4, prompts.REPEAT_LABEL, self.repeat_region,
                              kind="ghost", width=76)
         self.b_repeat.pack(side="right")
@@ -1294,6 +1311,7 @@ class App:
         n = getattr(self, "_today_count", 0)
         if n:
             bits.append(f"今日 {n} 题")
+        bits.append(prompts.VERSION_LABEL)
         if hasattr(self, "st_right"):
             self.st_right.configure(text=" · ".join(bits))
 
@@ -1562,7 +1580,8 @@ class App:
         if not enabled:
             for b in (self.b_copy, self.b_steps, self.b_bad, self.b_redo,
                       self.b_plot, self.b_speak, self.b_judge,
-                      self.b_practice, self.b_card):
+                      self.b_practice, self.b_card, self.b_latex,
+                      self.b_alt):
                 try:
                     b.set_enabled(False)
                 except Exception:  # noqa: BLE001
@@ -1826,6 +1845,8 @@ class App:
                     self._on_stream(str(payload))
                 elif kind == "judge":
                     self._show_judge(str(payload))
+                elif kind == "alt":
+                    self._show_alt(str(payload))
                 elif kind == "practice":
                     self._show_practice(str(payload))
         except queue.Empty:
@@ -1983,6 +2004,11 @@ class App:
         self.b_judge.set_enabled(True)
         self.b_practice.set_enabled(True)
         self.b_card.set_enabled(True)
+        try:
+            self.b_latex.set_enabled(bool(getattr(res, "latex", "")))
+            self.b_alt.set_enabled(True)
+        except Exception:  # noqa: BLE001
+            pass
         self.b_speak.set_enabled(True)
         try:
             _expr = plotter.extract_function(payload.get("text") or "")
@@ -2189,6 +2215,14 @@ class App:
 
     def _enable_retry(self):
         self._failed = True
+        try:
+            if self.last_job:
+                kind, value = self.last_job
+                n = cfg_mod.queue_add({"kind": kind, "value": str(value)})
+                if n:
+                    self.note(prompts.MSG_QUEUE_ADDED + f"（共 {n} 条）")
+        except Exception:  # noqa: BLE001
+            pass
         try:
             if self.last_job:
                 self.b_redo.set_text(prompts.LBL_RETRY)
@@ -2425,6 +2459,15 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    def _set_detail(self, text: str):
+        try:
+            self.det.configure(state="normal")
+            self.det.delete("1.0", "end")
+            self.det.insert("1.0", text or "")
+            self.det.configure(state="disabled")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _copy_text(self, text: str, quiet=False) -> bool:
         try:
             self.root.clipboard_clear()
@@ -2536,6 +2579,111 @@ class App:
                                 "Anki → 文件 → 导入 → 选这个 txt" % (n, path))
         except Exception as exc:  # noqa: BLE001
             self.log("导出卡片失败：%s" % exc)
+
+
+
+    # ------------------------------------------------------------ v2.13 输入与工具
+    def ask_typed(self):
+        """弹窗手敲题目（完全绕开 OCR）。"""
+        win = tk.Toplevel(self.root)
+        win.title(prompts.MSG_TYPED_TITLE)
+        win.configure(bg=UI["card"])
+        win.geometry("560x360")
+        win.transient(self.root)
+        try:
+            apply_icon(win)
+        except Exception:  # noqa: BLE001
+            pass
+        tk.Label(win, text=prompts.MSG_TYPED_TITLE, bg=UI["card"], fg=UI["dim"],
+                 font=(FONT, 10), anchor="w").pack(fill="x", padx=14, pady=(12, 6))
+        box = tk.Text(win, height=10, bg=UI["card2"], fg=UI["text"], bd=0,
+                      insertbackground=UI["accent"], font=(FONT, 11),
+                      padx=10, pady=8, wrap="word")
+        box.pack(fill="both", expand=True, padx=14)
+        box.focus_set()
+
+        def submit(_ev=None):
+            text = box.get("1.0", "end").strip()
+            if len(text) < 6:
+                messagebox.showinfo("提示", prompts.MSG_TYPED_EMPTY, parent=win)
+                return
+            win.destroy()
+            self._start_text(text)
+
+        row = tk.Frame(win, bg=UI["card"])
+        row.pack(fill="x", padx=14, pady=10)
+        Pill(row, prompts.L("cancel"), win.destroy, kind="ghost", width=64).pack(side="right")
+        Pill(row, prompts.L("ok"), submit, kind="primary", width=76).pack(side="right", padx=(0, 8))
+        box.bind("<Control-Return>", submit)
+        win.bind("<Escape>", lambda _e: win.destroy())
+
+    def solve_typed(self):
+        self.ask_typed()
+
+    def open_image(self):
+        path = filedialog.askopenfilename(
+            title="打开题目图片",
+            filetypes=[("图片", "*.png *.jpg *.jpeg *.bmp *.webp"), ("所有文件", "*.*")])
+        if path:
+            self._run_path(path)
+
+    def copy_latex(self):
+        payload = self.last_payload or {}
+        latex = ""
+        try:
+            latex = (payload.get("result").latex or "") if payload.get("result") else ""
+        except Exception:  # noqa: BLE001
+            latex = ""
+        if not latex:
+            self.set_status(prompts.MSG_LATEX_NONE)
+            return
+        if self._copy_text(latex):
+            self._copy_flash()
+            self.set_status(prompts.MSG_LATEX_COPIED)
+
+    def alt_method(self):
+        payload = self.last_payload or {}
+        if not payload:
+            self.set_status(prompts.MSG_ALT_NONE)
+            return
+        self.set_status(prompts.MSG_ALT_RUN)
+        cfg = self._current_cfg()
+        question = payload.get("text") or ""
+        result = payload.get("result")
+
+        def worker():
+            try:
+                client = deepseek_api.DeepSeekClient(
+                    cfg["api_key"], cfg["base_url"], cfg["model"], timeout=90)
+                out = solver.alt_method(
+                    client, question,
+                    getattr(result, "answer", "") if result else "",
+                    getattr(result, "reasoning", "") if result else "",
+                    model=cfg["model"])
+                self.q.put(("alt", out))
+            except Exception as exc:  # noqa: BLE001
+                self.q.put(("alt", f"换解法失败：{exc}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_alt(self, text):
+        try:
+            self._set_detail(prompts.LBL_ALT_TITLE + "\n\n" + (text or ""))
+        except Exception:  # noqa: BLE001
+            pass
+        self.set_status("已换一种解法，详见下方")
+
+    def retry_queue(self):
+        item = cfg_mod.queue_pop()
+        if not item:
+            self.set_status(prompts.MSG_QUEUE_EMPTY)
+            return
+        self.set_status(prompts.MSG_QUEUE_RUN)
+        kind, value = item.get("kind"), item.get("value")
+        if kind == "text":
+            self._start_text(str(value))
+        else:
+            self._run_path(str(value))
 
     def recent_menu(self):
         if not self.recent_shots:
@@ -3240,6 +3388,8 @@ class App:
         Pill(row7, "导出卡片", self.export_cards, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, "余额", lambda: self.check_balance(silent=False), kind="flat",
+             height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row7, prompts.L("queue"), self.retry_queue, kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
 
         msg = tk.Label(frm, text="Key 获取：platform.deepseek.com → API keys",

@@ -38,7 +38,10 @@ FEISHU_SYSTEM = """你是一个严谨的解题专家。用户会给你一段从�
  只写值或表达式本身，不要写"答案：""x="这类前缀（除非输入框明确要求写等式）；
  分数写 3/5 而不是 \\frac{3}{5}；带单位就带上单位；
  多个空按出现顺序用逗号分隔。
- 选择题或不需要填框的题，这一段留空即可。）"""
+ 选择题或不需要填框的题，这一段留空即可。）
+
+## LaTeX
+（把这道题的题干用一行 LaTeX 表示；没有数学公式就写 none。不要解释。）"""
 
 VERIFY_SYSTEM = """你是一位答案审核专家。下面会给出同一道题和若干个候选解答。
 你的任务：独立判断哪个答案正确，或给出你认为正确的答案。
@@ -79,6 +82,8 @@ def clean_fill(raw: str) -> str:
         return ""
     s = "".join(_FULL2HALF.get(ch, ch) for ch in raw.strip())
     s = s.replace("$", "").strip()
+    # 1,000 -> 1000（只动"数字,数字"这种千分位，保留 2, 3 这种多值分隔）
+    s = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", s)
     # 只有"变量 = 数值"这种简单形态才去掉前缀
     m = re.match(r"^[a-zA-Z]\s*=\s*(.+)$", s)
     if m and not re.search(r"[a-zA-Z]", m.group(1)):
@@ -87,6 +92,19 @@ def clean_fill(raw: str) -> str:
     s = re.sub(r"[ \t]{2,}", " ", s).strip()
     s = s.rstrip("。.")
     return s[:200]
+
+
+
+_LATEX_RE = re.compile(r"##\s*LaTeX\s*\n+(.+?)(?:\n\s*##|$)", re.S | re.I)
+
+
+def extract_latex(text: str) -> str:
+    m = _LATEX_RE.search(text or "")
+    if not m:
+        return ""
+    out = m.group(1).strip()
+    out = out.replace("none", "").replace("None", "").strip()
+    return out[:300]
 
 
 def extract_fill(text: str) -> str:
@@ -138,7 +156,8 @@ def _norm_key(answer: str) -> str:
 class SolveResult:
     question_text: str
     answer: str = ""
-    fill: str = ""                 # 可原样敲进输入框的答案（MyMathLab / Canvas）
+    fill: str = ""
+    latex: str = ""                 # 可原样敲进输入框的答案（MyMathLab / Canvas）
     reasoning: str = ""
     samples: list[str] = field(default_factory=list)      # 每次采样的最终答案
     sample_details: list[str] = field(default_factory=list)
@@ -356,6 +375,7 @@ class Solver:
         res.answer = best_answer
         res.reasoning = best_detail
         res.fill = extract_fill(best_detail)
+        res.latex = extract_latex(best_detail)
 
         # 3) 交叉审核（样本有分歧，或始终开启）
         if self.verify and self.samples >= 1:
@@ -537,3 +557,14 @@ class Solver:
 
         res.elapsed = time.time() - t0
         return res
+
+def alt_method(client, question: str, answer: str = "", reasoning: str = "",
+               model: str = "deepseek-chat", max_tokens: int = 900) -> str:
+    """让模型换一种解法（不重复原思路）。"""
+    import prompts as _pm
+    user = ("题目：\n" + (question or "")[:2500] +
+            "\n\n参考答案：" + (answer or "") +
+            "\n\n原解法（不要重复）：\n" + (reasoning or "")[:1200])
+    return client.chat([{"role": "system", "content": _pm.ALT_SYSTEM},
+                        {"role": "user", "content": user}],
+                       temperature=0.6, max_tokens=max_tokens, model=model)

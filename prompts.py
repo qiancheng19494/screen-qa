@@ -114,3 +114,33 @@ MSG_BUDGET_LOW = "今日已花 ¥{cost:.2f}（预算 ¥{budget:.2f}），注意�
 MSG_BALANCE_LOW = "余额只剩 ¥{amount:.2f}，记得充值"
 
 REPEAT_LABEL = "重复区域"
+
+# ---- v2.13：LaTeX 输出 / 换解法 / 键盘输入 / 队列 / 做题徽章 ----
+LATEX_SECTION = """## LaTeX
+"""
+ALT_SYSTEM = """你是数学老师。请给出与上一题不同的解题思路（另一种方法），不要重复同样的步骤。
+
+要求：
+1. 先一行说明「方法：xxx」（例如 因式分解 / 求根公式 / 代入消元 / 配方法）；
+2. 再写 3-6 步关键步骤，每步一行；
+3. 最后一行写「同一答案：<结果>」。
+不要写与数学无关的内容。"""
+LATEX_LABEL = "复制LaTeX"
+ALT_LABEL = "换解法"
+OPEN_LABEL = "打开图片"
+TYPED_LABEL = "键入题目"
+QUEUE_LABEL = "待重试"
+MSG_TYPED_EMPTY = "没有输入内容。把题目文字粘进来（含选项）再回车。"
+MSG_TYPED_TITLE = "键入题目（Ctrl+Enter 开始作答）"
+MSG_ALT_RUN = "正在换一种解法…"
+MSG_ALT_NONE = "还没有可复用的题目。"
+MSG_LATEX_NONE = "这道题的答案里没有 LaTeX 段。"
+MSG_LATEX_COPIED = "已复制 LaTeX。"
+MSG_QUEUE_EMPTY = "没有待重试的任务。"
+MSG_QUEUE_ADDED = "已存进待重试队列（本地），网络恢复后点「待重试」重跑。"
+MSG_QUEUE_RUN = "开始重跑待重试队列…"
+VERSION_LABEL = "v2.13"
+LBL["ok"] = ("开始作答", "Solve")
+LBL["cancel"] = ("取消", "Cancel")
+LBL["queue"] = ("待重试", "Queue")
+LBL_ALT_TITLE = "另一种解法"

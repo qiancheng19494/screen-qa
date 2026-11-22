@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import time
 from typing import Optional
 
@@ -351,37 +352,6 @@ def clipboard_image() -> Optional[Image.Image]:
         return None
 
 
-def clipboard_set_text(text: str) -> bool:
-    """把文字写进剪贴板（自己用，省得依赖 tk 的 clipboard 生命期问题）。"""
-    u, k32 = _u32()
-    data = (text or "").encode("utf-16-le") + b"\x00\x00"
-    if not _open_clipboard():
-        return False
-    try:
-        u.EmptyClipboard()
-        h = k32.GlobalAlloc(0x0042, len(data))  # GMEM_MOVEABLE | GMEM_ZEROINIT
-        if not h:
-            return False
-        ptr = k32.GlobalLock(h)
-        if not ptr:
-            return False
-        try:
-            ctypes.memmove(ptr, data, len(data))
-        finally:
-            k32.GlobalUnlock(h)
-        if not u.SetClipboardData(CF_UNICODETEXT, h):
-            return False
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-    finally:
-        try:
-            u.CloseClipboard()
-        except Exception:  # noqa: BLE001
-            pass
-
-
-# ---------------------------------------------------------------- 按窗口截图
 def list_windows(min_size: int = 200) -> list[tuple[int, str]]:
     """列出可见的顶层窗口（跳过极小窗口/无标题窗口）。"""
     u = ctypes.windll.user32
@@ -525,3 +495,57 @@ def autocrop(img, tol=20, pad=6, max_side=420):
         return im.crop((l, t, r, b))
     except Exception:  # noqa: BLE001
         return img
+
+# ---------- v2.13: 光标位置 / 屏幕尺寸 / 剪贴板写入（64 位安全） ----------
+def cursor_pos():
+    pt = wintypes.POINT()
+    u = ctypes.windll.user32
+    u.GetCursorPos(ctypes.byref(pt))
+    return int(pt.x), int(pt.y)
+
+
+def screen_size():
+    u = ctypes.windll.user32
+    return int(u.GetSystemMetrics(0)), int(u.GetSystemMetrics(1))
+
+
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
+
+
+def clipboard_set_text(text: str) -> bool:
+    """把文本写进剪贴板（不依赖 tkinter，给外部进程也能用）。"""
+    u = ctypes.windll.user32
+    try:
+        kernel = ctypes.windll.kernel32
+        kernel.GlobalAlloc.restype = ctypes.c_void_p
+        kernel.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        kernel.GlobalLock.restype = ctypes.c_void_p
+        kernel.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        u.SetClipboardData.restype = ctypes.c_void_p
+        u.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+        u.GetClipboardData.restype = ctypes.c_void_p
+        u.GetClipboardData.argtypes = [wintypes.UINT]
+        data = (str(text) + "\0").encode("utf-16-le")
+        if not u.OpenClipboard(None):
+            return False
+        try:
+            u.EmptyClipboard()
+            h = kernel.GlobalAlloc(_GMEM_MOVEABLE, len(data))
+            if not h:
+                return False
+            ptr = kernel.GlobalLock(h)
+            if not ptr:
+                return False
+            ctypes.memmove(ptr, data, len(data))
+            kernel.GlobalUnlock(h)
+            if not u.SetClipboardData(_CF_UNICODETEXT, h):
+                return False
+            h = None
+        finally:
+            u.CloseClipboard()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+

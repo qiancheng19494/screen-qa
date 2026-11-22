@@ -211,6 +211,8 @@ def _verify_one(question, answer, fill=""):
     q = _norm(question)
     if not q.strip():
         return "skip", "没有题目文本，跳过验算"
+    if _ineq_question(q):
+        return _ineq_check(q, answer, fill)
     # OCR 常把 "For y =" 粘成 "Fory ="：补回空格，后面 y = ... 的识别才成立
     q = re.sub(r"(?<=[a-z])([yg]\s*[=＝])", r" \1", q)
     vals = _answer_values(answer, fill)
@@ -276,6 +278,132 @@ def _verify_one(question, answer, fill=""):
         return "ok", "{0} 个值逐个代入都成立".format(len(vals))
     return "ok", "把 {0}={1:g} 代回去两边相等".format(VAR, vals[0])
 
+
+# ---------- v2.13: 选择题选项代入 + 不等式验算 ----------
+_OPT_LINE = re.compile(r"^\s*([A-Da-d])\s*[.)、．:：]\s*(.+?)\s*$", re.M)
+_INEQ_ANS = re.compile(r"(?:^|\s)x\s*(<=|>=|<|>)\s*(-?\d+(?:\.\d+)?)", re.I)
+_INEQ_Q = re.compile(r"([0-9xX+\-*/^().\s]{3,60}?)\s*(<=|>=|<|>)\s*([0-9xX+\-*/^().\s]{1,60})")
+
+
+def _options_of(text):
+    out = {}
+    for m in _OPT_LINE.finditer(text or ""):
+        k = m.group(1).upper()
+        if k not in out:
+            out[k] = m.group(2)
+    return out
+
+
+def _option_value(txt):
+    s = _norm(txt or "")
+    s = re.sub(r"^[a-zA-Z]\s*=\s*", "", s).strip()
+    s = s.replace("$", "").replace(",", "")
+    return _SafeEval.run(_fix_sup(s), 0.0)
+
+
+def _choice_check(question, letter):
+    opts = _options_of(question)
+    if not opts or letter not in opts:
+        return None
+    eqs = _equation_pairs(_drop_option_lines(_norm(question)))
+    if not eqs:
+        return None
+    passed = []
+    for k in sorted(opts):
+        v = _option_value(opts[k])
+        if v is None:
+            continue
+        flags = [_equation_at(lx, rx, v) for lx, rx in eqs]
+        if flags and all(f is True for f in flags):
+            passed.append(k)
+    if not passed:
+        return ("skip", "选项都没能代入成立，无法用验算判断选择题")
+    if len(passed) == 1:
+        k = passed[0]
+        if k == letter:
+            return ("ok", "只有 {0} 项满足题干（选项代入）".format(k))
+        return ("fail", "代入题干只有 {0} 项成立，但答案是 {1}（选项代入）".format(k, letter))
+    return ("skip", "有多项都成立（{0}），选项代入无法区分".format("".join(passed)))
+
+
+def _ineq_question(q):
+    for m in _INEQ_Q.finditer(q or ""):
+        left, op, right = m.group(1).strip(), m.group(2), m.group(3).strip()
+        left = left.lstrip(".:,;)]} ")
+        right = right.rstrip(".:,;([{ ")
+        if not left or not right:
+            continue
+        if VAR in left.lower() or VAR in right.lower():
+            return left, op, right
+    return None
+
+
+def _ineq_check(question, answer, fill):
+    ans = _INEQ_ANS.search(_norm(fill or answer or ""))
+    if not ans:
+        return ("skip", "不等式题，但答案里没有 x<k / x>k 形式")
+    a_op, a_b = ans.group(1), float(ans.group(2))
+    iq = _ineq_question(_norm(question))
+    if not iq:
+        return ("skip", "没解析到题干里的不等式")
+    left, op, right = iq
+
+    def f(x):
+        lv = _SafeEval.run(left, x)
+        rv = _SafeEval.run(right, x)
+        if lv is None or rv is None:
+            return None
+        return lv - rv
+
+    lo = hi = None
+    prev = None
+    for i in range(-1000, 1001, 5):
+        v = f(float(i))
+        if v is None:
+            continue
+        if prev is not None and (prev[1] == 0 or (prev[1] < 0) != (v < 0)):
+            lo, hi = float(prev[0]), float(i)
+            break
+        prev = (i, v)
+    if lo is None:
+        return ("skip", "没找到不等式的分界点（可能无解或恒成立）")
+    for _ in range(70):
+        mid = (lo + hi) / 2.0
+        vm = f(mid)
+        if vm is None:
+            break
+        if vm == 0:
+            lo = hi = mid
+            break
+        vlo = f(lo)
+        if vlo is None:
+            break
+        if (vlo < 0) != (vm < 0):
+            hi = mid
+        else:
+            lo = mid
+    b = (lo + hi) / 2.0
+    if abs(b - a_b) > 1e-3:
+        return ("fail", "不等式分界点应为 {0:.6g}，但答案是 {1:.6g}".format(b, a_b))
+
+    def holds(x):
+        v = f(x)
+        if v is None:
+            return False
+        return {"<": v < 0, ">": v > 0, "<=": v <= 0, ">=": v >= 0}[op]
+
+    left_ok = holds(b - 1.0)
+    right_ok = holds(b + 1.0)
+    truth = "<" if (left_ok and not right_ok) else (">" if (right_ok and not left_ok) else None)
+    if truth is None:
+        return ("skip", "不等号方向无法判定（可能是 <= / >= 边界）")
+    if a_op[0] != truth:
+        return ("fail", "不等号方向应为 x {0} {1:.6g}，但答案是 x {2} {3:.6g}".format(truth, b, a_op, a_b))
+    return ("ok", "分界点 {0:.6g} 与方向都对".format(b))
+
+
+# ---------- end v2.13 ----------
+
 def _fix_sup(text):
     """OCR 常把上标压平成 x2 / x3 / xA2，这里按幂处理（只对 x 后面做，避免误伤 2x）。"""
     text = re.sub(r"(?<=[xX])A([23])(?![0-9])", r"^\1", text)
@@ -288,7 +416,11 @@ def verify(question, answer, fill=""):
     背景：真实 OCR 会把 x 认成 ×（'9 × + 6 = 60'），也会把 x² 压平成 'x2'。
     """
     q = question or ""
-    if _CHOICE_ANS.match(fill or "") or _CHOICE_ANS.match(answer or ""):
+    letter = ((fill or "").strip() or (answer or "").strip()).upper()
+    if _CHOICE_ANS.match(letter):
+        cr = _choice_check(question or "", letter)
+        if cr:
+            return cr
         return "skip", "选择题答案不代入验算"
     q = _drop_option_lines(q)
     variants = [q]

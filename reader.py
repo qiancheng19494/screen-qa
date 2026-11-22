@@ -305,6 +305,16 @@ def read_image(image_path: str, order: list[str] | None = None,
             score = _text_score(first.text)
             if score >= VISION_FALLBACK_SCORE and len(first.text.strip()) >= 25:
                 log(f"本地 OCR 够用（质量 {score:.0f}），跳过视觉模型")
+                risky = ""
+                try:
+                    import ocrcheck
+                    risky = ocrcheck.risk(first.text) or ""
+                except Exception:  # noqa: BLE001
+                    risky = ""
+                # v2.13: 读到可疑内容（空括号/无符号行）且视觉可用时，自动双读一次
+                if risky and not cross_check and modlens_usable():
+                    log(f"OCR 读到可疑内容（{risky}）→ 自动双读校验一次")
+                    cross_check = True
                 if cross_check:
                     txt, warns = cross_check_text(
                         image_path, first.text, timeout_s=min(modlens_timeout, 45),

@@ -281,3 +281,42 @@ def _ensure_defaults() -> None:
             changed = True
     if changed:
         save(cfg)
+
+# ---------- v2.13: 待重试队列（失败任务先存本地，网络恢复后再跑） ----------
+QUEUE_PATH = ROOT / "queue.json"
+
+
+def queue_all() -> list:
+    try:
+        data = json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def queue_add(entry: dict) -> int:
+    items = queue_all()
+    key = (entry.get("kind"), entry.get("value"))
+    if any((i.get("kind"), i.get("value")) == key for i in items):
+        return len(items)
+    items.append(entry)
+    items = items[-30:]
+    try:
+        QUEUE_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return len(items)
+
+
+def queue_pop():
+    items = queue_all()
+    if not items:
+        return None
+    first = items.pop(0)
+    try:
+        QUEUE_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return first
