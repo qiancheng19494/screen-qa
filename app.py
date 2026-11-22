@@ -1461,12 +1461,13 @@ class App:
         # ---- 状态栏
         st = tk.Frame(self.root, bg=UI["card2"])
         st.pack(fill="x", side="bottom", before=wrap)
-        self.status = tk.Label(st, text="就绪", bg=UI["card2"], fg=UI["muted"],
-                               font=(FONT, 9), anchor="w")
-        self.status.pack(side="left", padx=12, pady=4)
+        # 右侧先占位（贴右不被挤），左侧状态过长时自行截断
         self.st_right = tk.Label(st, text="", bg=UI["card2"], fg=UI["muted"],
                                  font=(FONT, 8), anchor="e")
-        self.st_right.pack(side="right", padx=12)
+        self.st_right.pack(side="right", padx=12, pady=4)
+        self.status = tk.Label(st, text="就绪", bg=UI["card2"], fg=UI["muted"],
+                               font=(FONT, 9), anchor="w")
+        self.status.pack(side="left", fill="x", expand=True, padx=12, pady=4)
 
     def _show_page(self, name):
         """切到某一组按钮（作答 / 工具 / 记录）。"""
@@ -1522,17 +1523,22 @@ class App:
 
     def _refresh_status_meta(self):
         bits = []
-        try:
-            bits.append(str(self.model_var.get()))
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            bits.append("采样 " + str(self.samples_var.get()))
-        except Exception:  # noqa: BLE001
-            pass
+        _has_bal = bool(getattr(self, "_balance_text", ""))
+        if not _has_bal:
+            try:
+                bits.append("采样 " + str(self.samples_var.get()))
+            except Exception:  # noqa: BLE001
+                pass
         n = getattr(self, "_today_count", 0)
-        if n:
+        if n and not getattr(self, "_balance_text", ""):
             bits.append(f"今日 {n} 题")
+        _bal = getattr(self, "_balance_text", "")
+        if _bal:
+            bits.append(_bal)
+        if not _has_bal:
+            n0 = getattr(self, "_today_count", 0)
+            if n0:
+                pass
         bits.append(prompts.VERSION_LABEL)
         if hasattr(self, "st_right"):
             self.st_right.configure(text=" · ".join(bits))
@@ -2072,6 +2078,14 @@ class App:
                 kind, payload = self.q.get_nowait()
                 if kind == "log":
                     self.log(str(payload))
+                elif kind == "balance":
+                    try:
+                        self._balance_text = f"\u00a5{payload['amount']:.2f}"
+                        if payload.get("n"):
+                            self._balance_text += f" \u00b7 \u7ea6 {payload['n']} \u9898"
+                    except Exception:  # noqa: BLE001
+                        self._balance_text = ""
+                    self._refresh_status_meta()
                 elif kind == "status":
                     self.set_status(str(payload))
                 elif kind == "busy":
@@ -3244,14 +3258,15 @@ class App:
                 info = client.balance()
                 stats = cfg_mod.daily_stats(self.cfg)
                 avg = float(stats.get("avg_cost") or 0)
-                left = ""
-                if avg > 0 and info.get("amount"):
-                    left = f" · \U0001F4B0 {info['amount']:.2f} {info.get('currency', 'CNY')}" \
-                           f" · 还能约 {int(info['amount'] / avg)} 题"
-                text = (f"余额 {info.get('amount', 0):.2f} {info.get('currency', 'CNY')}"
-                        f"{left}\n今日 {stats['count']} 题 · 约 ¥{stats['cost']:.4f} · "
+                amount = float(info.get("amount") or 0)
+                cur = info.get("currency", "CNY")
+                n_left = int(amount / avg) if avg > 0 else 0
+                text = (f"余额 {amount:.2f} {cur}"
+                        + (f"，约还能做 {n_left} 题" if n_left else "") +
+                        f"\n今日 {stats['count']} 题 · 约 ¥{stats['cost']:.4f} · "
                         f"{stats['tokens_in'] + stats['tokens_out']} tokens")
-                self.q.put(("log", f"💰 {text.split(chr(10))[0]}"))
+                self.q.put(("balance", {"amount": amount, "cur": cur, "n": n_left}))
+                self.note(f"💰 {text.split(chr(10))[0]}")
                 if not silent:
                     self.root.after(0, lambda: messagebox.showinfo("余额与今日花费", text))
             except Exception as exc:  # noqa: BLE001
