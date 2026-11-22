@@ -39,11 +39,17 @@ _ARROW = re.compile(r"([xX])\s*[—–一]\s*[Oo0]\s*\)")
 _ARROW2 = re.compile(r"→|一>|—>")
 
 
+def _tilde(s: str) -> str:
+    """RapidOCR 把上标 ^ 认成 ~（实测 (x~2-9)）→ 补回幂运算。"""
+    import re as _re
+    return _re.sub(r"(?<=[0-9A-Za-z)])\s*~\s*(?=[0-9A-Za-z(])", "^", s)
+
+
 def repair(text: str) -> tuple[str, int]:
     """返回 (修正后的文本, 改动处数)。"""
     if not text:
         return text or "", 0
-    out = text
+    out = _tilde(text)
     n = 0
 
     for bad, good in _CHAR_MAP.items():

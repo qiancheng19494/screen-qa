@@ -18,6 +18,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+import ocr_rapid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -189,10 +191,29 @@ def read_with_modlens(image_path: str, timeout_s: int = 300,
 
 
 # --------------------------------------------------------------- 本地 OCR
+_RAPID_ERR = ""
+
+
 def read_with_ocr(image_path: str, timeout_s: int = 120,
                   quality: str = "standard") -> ReadResult:
     t0 = time.time()
+    global _RAPID_ERR
+    _RAPID_ERR = ""
+    if ocr_rapid.available():
+        try:
+            text = ocr_rapid.recognize(image_path)
+            if text.strip():
+                import ocrfix
+                text, fixes = ocrfix.repair(text)
+                warns = [f"本地 OCR 修了 {fixes} 处形近字"] if fixes else []
+                return ReadResult(text=text, backend="rapidocr",
+                                  warnings=warns, elapsed=time.time() - t0)
+        except Exception as exc:  # noqa: BLE001
+            _RAPID_ERR = f"RapidOCR 失败：{exc}"
+
     res = ReadResult(backend="winocr")
+    if _RAPID_ERR:
+        res.warnings.append(_RAPID_ERR)
     try:
         import ocrfix
         import psocr

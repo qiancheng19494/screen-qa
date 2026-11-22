@@ -113,7 +113,7 @@ DEFAULTS = {
     "watch_clip": False,
     "clip_fallback": True,
     "splash": True,
-    "translate": True,
+    "translate": False,
     "translate_only_ascii": True,
     "autocrop": True,
     "budget_day": 1.0,
