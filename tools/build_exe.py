@@ -47,6 +47,14 @@ def main() -> int:
         "--icon", str(ROOT / "assets" / "app.ico"),
         "--distpath", str(dist), "--workpath", str(build), "--specpath", str(build),
     ]
+    # RapidOCR / onnxruntime 要连模型和 DLL 一起收进去，否则 exe 里识别不出来
+    for pkg in ("rapidocr_onnxruntime", "onnxruntime"):
+        try:
+            __import__(pkg)
+            cmd += ["--collect-all", pkg]
+        except Exception as exc:  # noqa: BLE001
+            print(f"（跳过 {pkg}：{exc}）")
+    cmd += ["--hidden-import", "onnxruntime.capi._pybind_state"]
     for src, dest in datas:
         if src.exists():
             cmd += ["--add-data", f"{src};{dest}"]
