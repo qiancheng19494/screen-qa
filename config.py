@@ -15,8 +15,39 @@ def _app_dir() -> "Path":
 
 
 ROOT = _app_dir()
+# 常见 OpenAI 兼容服务商（只要 base_url + 模型名对得上就能用）
+PROVIDERS = {
+    "DeepSeek": ("https://api.deepseek.com", "deepseek-chat"),
+    "OpenAI": ("https://api.openai.com", "gpt-4o-mini"),
+    "\u667a\u8c31 GLM": ("https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"),
+    "\u901a\u4e49\u5343\u95ee": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+    "OpenRouter": ("https://openrouter.ai/api/v1", "deepseek/deepseek-chat"),
+    "Ollama\u672c\u5730": ("http://localhost:11434/v1", "qwen2.5:7b"),
+}
+
 CONFIG_PATH = ROOT / "config.json"
-HISTORY_DIR = ROOT / "history"
+# 当前数据目录：游客=程序目录，登录用户=程序目录/data/<用户名>
+PROFILE = ROOT
+
+
+def set_profile(name: str) -> Path:
+    """切换数据目录（登录用户各自一套 records/errors/queue/配置）。"""
+    global PROFILE, CONFIG_PATH, RECORDS_PATH, ERRORS_PATH, QUEUE_PATH
+    name = (name or "").strip()
+    PROFILE = (ROOT / "data" / name) if name else ROOT
+    try:
+        PROFILE.mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001
+        PROFILE = ROOT
+    CONFIG_PATH = PROFILE / "config.json"
+    RECORDS_PATH = PROFILE / "records.jsonl"
+    ERRORS_PATH = PROFILE / "errors.json"
+    QUEUE_PATH = PROFILE / "queue.json"
+    return PROFILE
+def history_dir() -> Path:
+    d = PROFILE / "history"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 DEFAULTS = {
     "api_key": "",
@@ -62,7 +93,11 @@ DEFAULTS = {
     "font_scale": 100,          # 详情区字号百分比 80~160
     "opacity": 100,             # 窗口不透明度 60~100
     "remember_pos": False,      # 记住窗口最后的位置
-    "last_pos": "",             # "WxH+X+Y"
+    "last_pos": "",
+    "win_size": "",
+    "dock": "corner",
+    "accent": "auto",
+    "login": True,             # "WxH+X+Y"
     "check_update": True,       # 启动时检查 GitHub 有没有新版本
     "tray": True,               # 关窗口时缩到托盘（而不是退出）
     "autostart": False,
@@ -141,9 +176,9 @@ def save_history(question: str, answer: str, meta: str = "") -> Path:
     """把一次问答存档，方便回看。"""
     import time
 
-    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    hdir = history_dir()
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    path = HISTORY_DIR / f"{stamp}.md"
+    path = hdir / f"{stamp}.md"
     body = f"# {stamp}\n\n{meta}\n\n## 题目（识别文本）\n\n{question}\n\n## 答案\n\n{answer}\n"
     path.write_text(body, encoding="utf-8")
     return path

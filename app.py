@@ -126,6 +126,28 @@ def apply_system_accent():
         return False
 
 
+# 主题色：只换强调色（和它的浅底），布局与文字色不变
+ACCENTS = {
+    "blue": ("#4d9dff", "#16233a"),
+    "sakura": ("#ff7ab6", "#3a1626"),
+    "mint": ("#35d6a4", "#0f2f28"),
+    "amber": ("#ffc857", "#3a2f16"),
+}
+
+
+def apply_accent(name: str) -> str:
+    """把强调色切到预设（auto/blue/sakura/mint/amber）。auto = 不动（跟随系统或默认）。"""
+    key = (name or "auto").strip().lower()
+    if key == "auto":
+        return "auto"
+    if key not in ACCENTS:
+        key = "blue"
+    acc, acc_bg = ACCENTS[key]
+    UI["accent"] = acc
+    UI["accent_bg"] = acc_bg
+    return key
+
+
 def apply_theme(name: str) -> str:
     """换配色（在建界面之前调用；改完需要重开窗口才彻底生效）。"""
     src = LIGHT_UI if str(name).lower() == "light" else DARK_UI
@@ -703,6 +725,9 @@ class Pill(tk.Canvas):
                  bg=None):
         self._c_bg = bg or master["bg"]
         fg, fill, hover = self.KINDS.get(kind, self.KINDS["ghost"])
+        if kind == "primary":  # 跟随主题强调色（设置里可换）
+            _acc = UI.get("accent", "#4d9dff")
+            fg, fill, hover = _acc, UI.get("accent_bg", "#16233a"), _acc
         self._pfont = tkfont.Font(family=FONT, size=font_size,
                                   weight="bold" if bold else "normal")
         w = width or (self._pfont.measure(text) + padx * 2)
@@ -905,7 +930,9 @@ class App:
         self.root = root
         self.cfg = cfg_mod.load()
         apply_theme(self.cfg.get("theme", "dark"))
-        if self.cfg.get("follow_accent", True):
+        _acc_pref = str(self.cfg.get("accent") or "auto").lower()
+        apply_accent(_acc_pref)
+        if _acc_pref == "auto" and self.cfg.get("follow_accent", True):
             apply_system_accent()
         self.q: queue.Queue = queue.Queue()
         self.busy = False
@@ -997,7 +1024,20 @@ class App:
         except Exception:  # noqa: BLE001
             self.font_scale = 1.0
         compact = bool(self.cfg.get("compact"))
-        place_bottom_right(root, 474, 759 if compact else 794)
+        self.dock = str(self.cfg.get("dock") or "corner")
+        _w, _h = 474, (759 if compact else 794)
+        if self.dock == "free":
+            root.resizable(True, True)
+            geom = str(self.cfg.get("win_size") or "")
+            if not re.match(r"^\d+x\d+[+-]-?\d+[+-]-?\d+$", geom):
+                geom = f"{_w}x{_h}+{max(40, (root.winfo_screenwidth() - _w) // 2)}+60"
+            try:
+                root.geometry(geom)
+            except Exception:  # noqa: BLE001
+                place_bottom_right(root, _w, _h)
+        else:
+            root.resizable(False, False)
+            place_bottom_right(root, _w, _h)
         pos = str(self.cfg.get("last_pos") or "")
         if self.cfg.get("remember_pos") and re.match(r"^\d+x\d+[+-]\d+[+-]\d+$", pos):
             try:
@@ -1026,7 +1066,7 @@ class App:
     def _on_map(self, _ev=None):
         """窗口从最小化恢复（或 Win+D 后恢复）时，再贴一次右下角。"""
         try:
-            if self.root.state() == "normal":
+            if self.root.state() == "normal" and getattr(self, "dock", "corner") == "corner":
                 self.root.after(80, lambda: snap_bottom_right(self.root))
         except Exception:  # noqa: BLE001
             pass
@@ -1069,6 +1109,13 @@ class App:
                                 font=(FONT, 11), cursor="hand2")
         self.lbl_pin.pack(side="right", padx=(0, 10))
         self.lbl_pin.bind("<Button-1>", lambda e: self.toggle_topmost())
+        self.lbl_dock = tk.Label(head, text="\u2b1a" if self.dock == "free" else "\u21f2",
+                                 bg=bg, fg=UI["muted"], font=(FONT, 11), cursor="hand2")
+        self.lbl_dock.pack(side="right", padx=(0, 8))
+        self.lbl_dock.bind("<Button-1>", lambda e: self.toggle_dock())
+        if self.dock == "free":
+            for _w in (self.banner if hasattr(self, "banner") else head,):
+                pass
 
         # 顶部渐变强调线：让界面有个"标题栏"的层次
         self.grad = _gradient(wrap)
@@ -1349,7 +1396,10 @@ class App:
         """切到某一组按钮（作答 / 工具 / 记录）。"""
         for n_, f_ in getattr(self, "pages", {}).items():
             if n_ == name:
-                f_.pack(fill="x")
+                f_.pack(fill="x", pady=(6, 0))
+                for _i, _pad in enumerate((3, 1, 0)):
+                    self.root.after(45 * (_i + 1),
+                                    lambda p=_pad, fr=f_: fr.pack_configure(pady=(p, 0)))
             else:
                 f_.pack_forget()
         for n_, pill_ in getattr(self, "tab_pills", {}).items():
@@ -1522,6 +1572,31 @@ class App:
                 pass
 
         threading.Thread(target=play, daemon=True).start()
+
+    def toggle_dock(self):
+        """贴右下角 ↔ 自由窗口（自由模式下可缩放、可拖动、记住位置尺寸）。"""
+        self.dock = "free" if getattr(self, "dock", "corner") == "corner" else "corner"
+        self.cfg["dock"] = self.dock
+        cfg_mod.save(self.cfg)
+        if self.dock == "free":
+            self.root.resizable(True, True)
+            try:
+                self.lbl_dock.configure(text="\u2b1a")
+            except Exception:  # noqa: BLE001
+                pass
+            self.log("\u5df2\u5207\u5230\u81ea\u7531\u7a97\u53e3\uff1a\u53ef\u62d6\u52a8\u3001\u53ef\u62c9\u4f38\uff0c\u4f4d\u7f6e\u4f1a\u8bb0\u4f4f")
+        else:
+            self.root.resizable(False, False)
+            try:
+                self.lbl_dock.configure(text="\u21f2")
+            except Exception:  # noqa: BLE001
+                pass
+            place_bottom_right(self.root, 474, 759 if self.cfg.get("compact") else 794)
+            try:
+                snap_bottom_right(self.root)
+            except Exception:  # noqa: BLE001
+                pass
+            self.log("\u5df2\u8d34\u56de\u53f3\u4e0b\u89d2")
 
     def toggle_topmost(self):
         self.topmost = not self.topmost
@@ -3537,6 +3612,38 @@ class App:
                            activeforeground=UI["text"], highlightthickness=0)
         lang_box.pack(side="left", padx=(6, 18))
 
+        look3 = tk.Frame(frm, bg=bg)
+        look3.grid(row=9, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        # 说明：这一行的 grid 行号与 look2 相同会被覆盖，故放在 look2 之前构建
+        tk.Label(look3, text="\u4e3b\u9898\u8272", bg=bg, fg=UI["dim"], font=(FONT, 9)).pack(side="left")
+        _acc_names = {"\u9752\u84dd": "blue", "\u6a31\u82b1": "sakura", "\u8584\u8377": "mint", "\u6d45\u91d1": "amber"}
+        _cur = str(self.cfg.get("accent") or "blue")
+        accent_pick = tk.StringVar(value=[k for k, v in _acc_names.items() if v == _cur][0])
+        accent_box = tk.OptionMenu(look3, accent_pick, *_acc_names.keys())
+        self._style_optionmenu(accent_box, width=6)
+        accent_box.configure(bg=card, fg=UI["text"], activebackground=card2,
+                            activeforeground=UI["text"], highlightthickness=0)
+        accent_box.pack(side="left", padx=(6, 18))
+        tk.Label(look3, text="\u670d\u52a1\u5546", bg=bg, fg=UI["dim"], font=(FONT, 9)).pack(side="left", padx=(16, 0))
+        prov_pick = tk.StringVar(value=next((k for k, v in cfg_mod.PROVIDERS.items()
+                                             if v[0] == str(self.cfg.get("base_url", ""))),
+                                            "DeepSeek"))
+        prov_box = tk.OptionMenu(look3, prov_pick, *cfg_mod.PROVIDERS.keys(),
+                                 command=lambda _v: vars_["base_url"].set(
+                                     cfg_mod.PROVIDERS[prov_pick.get()][0]))
+        self._style_optionmenu(prov_box, width=11)
+        prov_box.configure(bg=card, fg=UI["text"], activebackground=card2,
+                           activeforeground=UI["text"], highlightthickness=0)
+        prov_box.pack(side="left", padx=(6, 16))
+
+        tk.Label(look3, text="\u7a97\u53e3", bg=bg, fg=UI["dim"], font=(FONT, 9)).pack(side="left")
+        dock_pick = tk.StringVar(value="\u81ea\u7531\u7a97\u53e3" if str(self.cfg.get("dock")) == "free" else "\u8d34\u53f3\u4e0b\u89d2")
+        dock_box = tk.OptionMenu(look3, dock_pick, "\u8d34\u53f3\u4e0b\u89d2", "\u81ea\u7531\u7a97\u53e3")
+        self._style_optionmenu(dock_box, width=9)
+        dock_box.configure(bg=card, fg=UI["text"], activebackground=card2,
+                           activeforeground=UI["text"], highlightthickness=0)
+        dock_box.pack(side="left", padx=(6, 0))
+
         accent_var = tk.BooleanVar(value=bool(self.cfg.get("follow_accent", True)))
         tk.Checkbutton(look2, text="跟随系统强调色", variable=accent_var, bg=bg, fg=UI["dim"],
                        selectcolor=card, activebackground=bg, activeforeground=UI["text"],
@@ -3551,7 +3658,7 @@ class App:
                        ).pack(side="left", padx=(6, 0))
 
         row6 = tk.Frame(frm, bg=bg)
-        row6.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        row6.grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
         tk.Label(row6, text=self._region_text(), bg=bg, fg=UI["muted"],
                  font=(FONT, 9)).pack(side="left")
         Pill(row6, "清空缓存", (lambda: msg.configure(
@@ -3765,6 +3872,10 @@ class App:
             self.cfg["exam_date"] = (exam_var.get() or "").strip()
             self.cfg["lang"] = "en" if lang_var.get().startswith("English") else "zh"
             self.cfg["follow_accent"] = bool(accent_var.get())
+            self.cfg["accent"] = _acc_names.get(accent_pick.get(), "blue")
+            _want_free = dock_pick.get().startswith("\u81ea\u7531")
+            if _want_free != (getattr(self, "dock", "corner") == "free"):
+                self.toggle_dock()
             self.cfg["mica"] = bool(mica_var.get())
             prompts.set_lang(self.cfg["lang"])
             cfg_mod.save(self.cfg)
@@ -4126,9 +4237,11 @@ class App:
             except Exception:  # noqa: BLE001
                 pass
         try:
+            if getattr(self, "dock", "corner") == "free":
+                self.cfg["win_size"] = self.root.geometry()
             if self.cfg.get("remember_pos"):
                 self.cfg["last_pos"] = self.root.geometry()
-                cfg_mod.save(self.cfg)
+            cfg_mod.save(self.cfg)
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -4164,7 +4277,25 @@ def main():
         sys.exit(cli_main(args))
 
     root = tk.Tk()
+    root.withdraw()
+    # 本机账号（可游客进入）：不同用户各自的 records/errors/缓存/配置
+    try:
+        if cfg_mod.load().get("login", True):
+            import accounts
+            who = accounts.ask_login(root)
+            if who is None:
+                root.destroy()
+                sys.exit(0)
+            if who:
+                cfg_mod.set_profile(accounts.safe_name(who))
+                global CACHE_PATH
+                CACHE_PATH = cfg_mod.PROFILE / "cache.json"
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        print("登录窗异常（直接以游客进入）：", exc)
     app = App(root)
+    root.deiconify()
     try:
         app.show_splash()
     except Exception:  # noqa: BLE001
