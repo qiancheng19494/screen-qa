@@ -525,3 +525,39 @@ python tools/regress_offline.py           # 回放：只验判定与验算逻辑
 
 桌面端入口：⚙ → 「云端」→ 填地址 → 登录/注册 → 开启代理；「同步记录」把 `records.jsonl` 增量推到云端。
 命令行：`python tools/sync_cloud.py --since 0`。
+
+## v2.21：WebView 界面（C 方案落地）
+
+界面从 Tk 换成了 **HTML/CSS/JS + WebView2**，逻辑仍然是同一套 Python（识别 → 验算 → 投票 → 缓存）。
+
+![WebView 界面](docs/screenshots/ui-web.png)
+
+**怎么跑**
+
+```bash
+pip install pywebview          # 只需要这一个额外依赖
+python app_web.py              # 或双击 启动-WEB版.bat
+```
+
+Tk 版仍然保留（`python app.py` / `启动.bat`），WebView 出问题随时切回去。
+
+**结构**
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 界面 | `ui/index.html` `ui/app.css` `ui/app.js` | 布局、主题、交互，纯前端 |
+| 桥 | `webui_bridge.py` | 把 `run_pipeline` / 截图 / 剪贴板 / 账本暴露成 JS 可调方法 |
+| 宿主 | `app_web.py` | 无边框 WebView2 窗口 + 全局热键 + 窗口定位 |
+
+**这版能看到的改变**
+
+- 真正的 CSS 圆角、阴影、渐变、悬停动效（Tk 做不到的）
+- 26px 粗体答案 + 一致度进度条 + 徽章（✅ 代入验算 / 🎯 一击命中 / ¥0.0023）
+- 题面卡可编辑，改完点「用这段重算」；英文题自动附中文翻译
+- 设置抽屉：Key / 接口 / 主题 / 强调色 / 字号 / 自动粘贴 / 双模型互检 / 自适应采样
+
+**已知限制**
+
+- WebView 版暂不支持窗口不透明度（WebView2 后端的 `opacity` 会抛 `ZoomFactor` 异常，已捕获跳过）
+- 还没打成 exe（Tk 版仍是 exe 分发；WebView 版需要 Python + pywebview）
+- 连续截图、判卷、练一练、账本目前先在 Tk 版用，WebView 版正在补齐

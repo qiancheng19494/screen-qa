@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>屏幕问答</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="theme-light">
+<div class="app">
+
+  <header class="topbar" id="topbar">
+    <div class="brand">
+      <span class="mark"><i></i></span>
+      <div class="brand-text">
+        <b>屏幕问答</b>
+        <small>截屏 · 读题 · 作答</small>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="icon-btn" id="btnPin" title="窗口置顶">📌</button>
+      <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
+      <button class="icon-btn" id="btnMin" title="最小化">—</button>
+      <button class="icon-btn" id="btnClose" title="关闭">✕</button>
+    </div>
+  </header>
+
+  <main class="scroll">
+    <section class="card answer-card" id="answerCard">
+      <div class="answer-row">
+        <div class="answer" id="answer">就绪</div>
+        <div class="chip" id="confChip" hidden>🟢 高置信度</div>
+      </div>
+      <div class="bar"><span id="agreeBar"></span></div>
+      <div class="meta" id="meta">按 Ctrl+Alt+Q 圈住题目，或点下面的按钮</div>
+    </section>
+
+    <section class="opts">
+      <label class="field"><span>识别</span>
+        <select id="reader">
+          <option value="winocr,modlens">自动（先本地OCR）</option>
+          <option value="modlens,winocr">自动（先视觉模型）</option>
+          <option value="modlens">仅视觉模型</option>
+          <option value="winocr">仅本地 OCR</option>
+        </select>
+      </label>
+      <label class="field"><span>模型</span>
+        <select id="model">
+          <option value="deepseek-chat">chat 快</option>
+          <option value="deepseek-reasoner">R1 强</option>
+        </select>
+      </label>
+      <label class="field narrow"><span>采样</span>
+        <select id="samples">
+          <option>1</option><option selected>3</option><option>5</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="verify" checked> 交叉审核</label>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-page="solve">作答</button>
+      <button class="tab" data-page="tools">工具</button>
+      <button class="tab" data-page="records">记录</button>
+    </nav>
+
+    <section class="card actions" data-page-body="solve">
+      <div class="row">
+        <button class="btn primary" id="btnRegion">框选截图</button>
+        <button class="btn" id="btnFull">全屏</button>
+        <button class="btn" id="btnPaste">粘贴</button>
+        <button class="btn right" id="btnCopy">复制答案</button>
+      </div>
+      <div class="row">
+        <button class="btn green" id="btnCont">▶ 连续截图</button>
+        <span class="hint">区域：<b id="regionLabel">整个屏幕</b> · 每 <b id="intervalLabel">3</b> 秒</span>
+        <button class="btn small right" id="btnHistory">历史</button>
+        <button class="btn small" id="btnRedo">重算</button>
+      </div>
+    </section>
+
+    <section class="card actions" data-page-body="tools" hidden>
+      <div class="row">
+        <button class="btn" id="btnTyped">键入题目</button>
+        <button class="btn" id="btnOpen">打开图片</button>
+        <button class="btn" id="btnRecent">最近图</button>
+        <button class="btn" id="btnLog">运行日志</button>
+      </div>
+      <div class="row">
+        <button class="btn" id="btnPlot">画图</button>
+        <button class="btn" id="btnLatex">复制 LaTeX</button>
+        <button class="btn" id="btnAlt">换解法</button>
+        <button class="btn" id="btnBad">标记错题</button>
+      </div>
+      <div class="row">
+        <button class="btn" id="btnJudge">判卷</button>
+        <button class="btn" id="btnPractice">练一练</button>
+        <button class="btn" id="btnCard">导出卡片</button>
+        <button class="btn" id="btnWarm">考前热身</button>
+      </div>
+    </section>
+
+    <section class="card actions" data-page-body="records" hidden>
+      <div class="row">
+        <button class="btn" id="btnLedger">账本</button>
+        <button class="btn" id="btnBalance">余额</button>
+        <button class="btn" id="btnSelfcheck">自检</button>
+        <button class="btn" id="btnExport">导出 CSV</button>
+      </div>
+      <p class="tiny">记录只存本机：records.jsonl / errors.json / history</p>
+    </section>
+
+    <section class="card question" id="qCard" hidden>
+      <div class="q-head">
+        <span class="dot"></span><span>题面（可改）</span>
+        <button class="btn tiny right" id="btnRecalc">用这段重算</button>
+      </div>
+      <textarea id="qText" rows="4" placeholder="把题目文字粘进来，然后点右上「用这段重算」"></textarea>
+      <div class="trans" id="trans" hidden></div>
+    </section>
+
+    <section class="card detail">
+      <div class="detail-head">
+        <span class="dot blue"></span><span>结果与推理</span>
+        <span class="badges" id="badges"></span>
+      </div>
+      <pre class="detail-body" id="detail">这里会显示填入答案、推理步骤和采样情况。</pre>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status">就绪</span>
+    <span id="meta2"></span>
+  </footer>
+
+  <!-- 设置抽屉 -->
+  <div class="drawer-mask" id="mask" hidden></div>
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <b>设置</b>
+      <button class="icon-btn" id="btnCloseDrawer">✕</button>
+    </div>
+    <div class="drawer-body">
+      <label class="fld">DeepSeek API Key
+        <input type="password" id="cfgKey" placeholder="sk-...">
+      </label>
+      <label class="fld">接口地址
+        <input type="text" id="cfgBase">
+      </label>
+      <div class="grid2">
+        <label class="fld">主题
+          <select id="cfgTheme"><option value="light">浅色</option><option value="dark">深色</option></select>
+        </label>
+        <label class="fld">强调色
+          <select id="cfgAccent">
+            <option value="blue">青蓝</option><option value="sakura">樱花</option>
+            <option value="mint">薄荷</option><option value="amber">浅金</option>
+          </select>
+        </label>
+      </div>
+      <div class="grid2">
+        <label class="fld">字号 %
+          <input type="number" id="cfgFont" min="80" max="160" step="5">
+        </label>
+        <label class="fld">不透明度 %
+          <input type="number" id="cfgOpacity" min="60" max="100" step="5">
+        </label>
+      </div>
+      <label class="chk"><input type="checkbox" id="cfgAutoPaste"> 答完自动粘贴到原窗口</label>
+      <label class="chk"><input type="checkbox" id="cfgEnter"> 再自动按回车提交</label>
+      <label class="chk"><input type="checkbox" id="cfgDual"> 双模型互检（更准，慢）</label>
+      <label class="chk"><input type="checkbox" id="cfgAdaptive"> 自适应采样（验算通过就少问）</label>
+      <label class="chk"><input type="checkbox" id="cfgSound"> 新题/答案提示音</label>
+      <label class="chk"><input type="checkbox" id="cfgTop"> 窗口置顶</label>
+      <div class="drawer-actions">
+        <button class="btn" id="btnCancelCfg">取消</button>
+        <button class="btn primary" id="btnSaveCfg">保存</button>
+      </div>
+      <p class="tiny" id="drawerHint">Key 只存本机（DPAPI 加密）。</p>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
