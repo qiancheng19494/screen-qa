@@ -162,3 +162,10 @@ button,select,input,textarea{font:inherit;color:inherit}
 .grid-img{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .kv{display:flex;justify-content:space-between;padding:4px 0;color:var(--dim)}
 .kv b{color:var(--text)}
+
+/* 页内框选 */
+#selWrap{position:fixed;inset:0;z-index:60;background:#0b0f15;cursor:crosshair}
+#selWrap img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}
+#selBox{position:absolute;border:2px solid #3b82f6;background:rgba(59,130,246,.14);box-shadow:0 0 0 9999px rgba(0,0,0,.35)}
+#selTip{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:6px 12px;border-radius:999px;
+  background:rgba(17,24,39,.78);color:#fff;font-size:12px;letter-spacing:.2px}

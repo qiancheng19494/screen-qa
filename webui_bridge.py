@@ -68,6 +68,7 @@ class Bridge:
     def __init__(self) -> None:
         self.win = None
         self.cfg = cfg_mod.load()
+        self._sel_full = None
         self.busy = False
         self.cont = False
         self._cont_thread = None
@@ -216,6 +217,87 @@ class Bridge:
         img.save(path)
         self._js_status(f"{label}完成，识别中…")
         return self._run(str(path))
+
+
+    # ---------- 页内框选（不依赖 Tk 遮罩，WebView 版专用）----------
+    def _data_uri(self, img, quality=72):
+        import base64
+        from io import BytesIO
+        buf = BytesIO()
+        img.save(buf, "JPEG", quality=quality)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    def _sel_screen(self):
+        try:
+            return capture.screen_size()
+        except Exception:  # noqa: BLE001
+            return (1920, 1080)
+
+    def _restore_win(self):
+        sw, sh = self._sel_screen()
+        w, h = 504, min(861, sh - 80)
+        x, y = max(sw - w - 26, 0), max(sh - h - 74, 0)
+        try:
+            self.win.resize(w, h)
+            self.win.move(x, y)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def capture_begin(self) -> dict:
+        """整屏截图 + 把窗口铺满屏幕，让页面自己画选择框。"""
+        try:
+            full = capture.grab_all()
+            self._sel_full = full
+            sw, sh = self._sel_screen()
+            try:
+                self.win.resize(int(sw), int(sh))
+                self.win.move(0, 0)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.12)
+            thumb = full.copy()
+            thumb.thumbnail((1500, 950))
+            return {"ok": True, "img": self._data_uri(thumb),
+                    "w": thumb.width, "h": thumb.height,
+                    "full_w": full.width, "full_h": full.height}
+        except Exception as exc:  # noqa: BLE001
+            self._restore_win()
+            return {"ok": False, "error": f"截屏失败：{exc}", "stage": "capture"}
+
+    def capture_cancel(self) -> dict:
+        self._restore_win()
+        self._sel_full = None
+        return {"cancelled": True}
+
+    def capture_finish(self, x1, y1, x2, y2, tw=0, th=0) -> dict:
+        """把页面坐标换算回原始截图坐标，裁剪后直接作答。"""
+        try:
+            full = getattr(self, "_sel_full", None)
+            if full is None:
+                self._restore_win()
+                return {"ok": False, "error": "没有截屏缓存，请重新框选", "stage": "capture"}
+            fx = full.width / float(tw or full.width)
+            fy = full.height / float(th or full.height)
+            left, right = sorted((x1 * fx, x2 * fx))
+            top, bot = sorted((y1 * fy, y2 * fy))
+            box = (int(left), int(top), int(right), int(bot))
+            if box[2] - box[0] < 12 or box[3] - box[1] < 12:
+                self._restore_win()
+                return {"ok": False, "error": "框太小了，再拉大一点", "stage": "capture"}
+            img = full.crop(box)
+            self.cfg["cont_bbox"] = [box[0], box[1], box[2] - box[0], box[3] - box[1]]
+            cfg_mod.save(self.cfg)
+            path = ROOT / "_tmp" / f"web_{int(time.time() * 1000)}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(path)
+            self._sel_full = None
+            self._restore_win()
+            self._js_status("识别中…")
+            return self._run(str(path))
+        except Exception as exc:  # noqa: BLE001
+            self._restore_win()
+            self._sel_full = None
+            return {"ok": False, "error": f"裁剪失败：{exc}", "stage": "capture"}
 
     def solve_text(self, text: str) -> dict:
         text = (text or "").strip()

@@ -78,7 +78,7 @@ def main() -> int:
         place_bottom_right(window, w, h)
         # 全局热键（框选 / 整屏 / 文字 / 重算）
         try:
-            hk = hotkey.Hotkeys()
+            hk = hotkey.HotkeyManager()
             hk.add("region", cfg.get("hotkey_region", "ctrl+alt+q"),
                    ["ctrl+shift+q", "ctrl+alt+1"])
             hk.add("full", cfg.get("hotkey_full", "ctrl+alt+w"), ["ctrl+alt+s", "ctrl+shift+w"])
@@ -86,6 +86,7 @@ def main() -> int:
             hk.add("redo", cfg.get("hotkey_redo", "ctrl+alt+r"), ["ctrl+shift+r"])
             hk.start()
             api._hk = hk
+            print("hotkey:", hk.ok_count, hk.bound, "failed:", hk.failed, flush=True)
         except Exception as exc:  # noqa: BLE001
             print("hotkey failed:", exc)
 
@@ -98,9 +99,10 @@ def main() -> int:
                 except Exception:  # noqa: BLE001
                     continue
                 try:
-                    if name in ("region", "full"):
-                        out = api.capture("region" if name == "region" else "full")
-                        api._js_render(out)
+                    if name == "region":
+                        api._js("startRegionSelect()")
+                    elif name == "full":
+                        api._js_render(api.capture("full"))
                     elif name == "text":
                         api._js_status("按 Ctrl+Alt+T：在「键入题目」里粘贴后重算")
                         api._js("document.getElementById('btnTyped').click()")
@@ -110,6 +112,20 @@ def main() -> int:
                     api._js_status(f"热键处理失败：{exc}")
 
         threading.Thread(target=loop, daemon=True).start()
+
+        if "--testregion" in sys.argv:
+            time.sleep(3.5)
+            try:
+                r = api.capture_begin()
+                print("[tr] begin:", {k: r.get(k) for k in ("ok", "w", "h", "full_w", "full_h")}, flush=True)
+                s_ = r["w"] / float(r["full_w"])
+                x1, y1 = 80 * s_, 150 * s_
+                x2, y2 = 980 * s_, 450 * s_
+                out = api.capture_finish(x1, y1, x2, y2, r["w"], r["h"])
+                print("[tr] answer:", out.get("ok"), out.get("answer"), out.get("fill"),
+                      out.get("confidence"), out.get("check"), flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print("[tr] failed:", exc, flush=True)
 
         if "--showmodal" in sys.argv:
             time.sleep(2.0)

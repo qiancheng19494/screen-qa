@@ -130,8 +130,99 @@ async function withBusy(label, fn) {
 }
 
 /* ---------- 动作 ---------- */
+
+/* ---------- 页内框选 ---------- */
+let selState = null;
+async function startRegionSelect() {
+  setBusy(true); setStatus("整屏截图…");
+  try {
+    const r = await py("capture_begin");
+    if (!r || !r.ok) { renderError(r || { error: "截图失败" }); await py("capture_cancel"); return; }
+    selState = { r, x1: 0, y1: 0, x2: 0, y2: 0, dragging: false };
+    const img = $("selImg");
+    img.src = r.img;
+    $("selWrap").hidden = false;
+    $("selBox").hidden = true;
+    setStatus("拖一个框圈住题目");
+  } catch (e) {
+    renderError({ error: String(e) });
+    try { await py("capture_cancel"); } catch (_) {}
+  } finally {
+    setBusy(false);
+  }
+}
+
+function selPoint(ev) {
+  const img = $("selImg").getBoundingClientRect();
+  const st = selState;
+  if (!st) return null;
+  const scale = Math.min(img.width / st.r.w, img.height / st.r.h);
+  const shownW = st.r.w * scale, shownH = st.r.h * scale;
+  const offX = img.left + (img.width - shownW) / 2;
+  const offY = img.top + (img.height - shownH) / 2;
+  const x = (ev.clientX - offX) / scale;
+  const y = (ev.clientY - offY) / scale;
+  return { x: Math.max(0, Math.min(st.r.w, x)), y: Math.max(0, Math.min(st.r.h, y)), wrap: $("selWrap").getBoundingClientRect(), scale, offX, offY, shownW, shownH };
+}
+
+function selDraw() {
+  const st = selState; if (!st) return;
+  const img = $("selImg").getBoundingClientRect();
+  const scale = Math.min(img.width / st.r.w, img.height / st.r.h);
+  const shownW = st.r.w * scale, shownH = st.r.h * scale;
+  const offX = img.left + (img.width - shownW) / 2;
+  const offY = img.top + (img.height - shownH) / 2;
+  const x = offX + Math.min(st.x1, st.x2) * scale;
+  const y = offY + Math.min(st.y1, st.y2) * scale;
+  const w = Math.abs(st.x2 - st.x1) * scale, h = Math.abs(st.y2 - st.y1) * scale;
+  const b = $("selBox");
+  b.hidden = false;
+  b.style.left = x + "px"; b.style.top = y + "px";
+  b.style.width = w + "px"; b.style.height = h + "px";
+}
+
+async function finishRegionSelect() {
+  const st = selState;
+  if (!st) return;
+  selState = null;
+  $("selWrap").hidden = true;
+  $("selBox").hidden = true;
+  setBusy(true); setStatus("识别中…");
+  try {
+    const res = await py("capture_finish", st.x1, st.y1, st.x2, st.y2, st.r.w, st.r.h);
+    if (res && res.ok === false) { renderError(res); return; }
+    if (res && res.cancelled) { setStatus("已取消"); return; }
+    renderResult(res);
+  } catch (e) { renderError({ error: String(e) }); }
+  finally { setBusy(false); }
+}
+
+(function bindRegion() {
+  const wrap = $("selWrap");
+  wrap.addEventListener("mousedown", (ev) => {
+    if (!selState) return;
+    const pt = selPoint(ev); if (!pt) return;
+    selState.x1 = pt.x; selState.y1 = pt.y; selState.x2 = pt.x; selState.y2 = pt.y;
+    selState.dragging = true; selDraw();
+  });
+  wrap.addEventListener("mousemove", (ev) => {
+    if (!selState || !selState.dragging) return;
+    const pt = selPoint(ev); if (!pt) return;
+    selState.x2 = pt.x; selState.y2 = pt.y; selDraw();
+  });
+  wrap.addEventListener("mouseup", async () => {
+    if (!selState || !selState.dragging) return;
+    selState.dragging = false;
+    if (Math.abs(selState.x2 - selState.x1) < 8 || Math.abs(selState.y2 - selState.y1) < 8) {
+      $("selBox").hidden = true; setStatus("框太小了，再拉大一点"); return;
+    }
+    await finishRegionSelect();
+  });
+})();
+
 async function doShot(mode) {
-  setBusy(true); setStatus(mode === "region" ? "圈选题目…" : "整屏识别…");
+  if (mode === "region") { await startRegionSelect(); return; }
+  setBusy(true); setStatus("整屏识别…");
   try {
     const res = await py("capture", mode);
     if (res && res.ok === false) { renderError(res); return; }
@@ -358,7 +449,10 @@ function bind() {
     };
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { $("drawer").hidden = true; $("mask").hidden = true; closeModal(); }
+    if (e.key === "Escape") {
+      if (!$("selWrap").hidden) { selState = null; $("selWrap").hidden = true; $("selBox").hidden = true; py("capture_cancel"); return; }
+      $("drawer").hidden = true; $("mask").hidden = true; closeModal();
+    }
     if (e.ctrlKey && e.key === "Enter") { $("btnRecalc").click(); }
     if (/^[1-9]$/.test(e.key) && state.items.length > 1 && document.activeElement.tagName !== "TEXTAREA") {
       const i = parseInt(e.key, 10) - 1;
