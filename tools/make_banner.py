@@ -1,36 +1,51 @@
-"""生成主窗顶部横幅（纯 PIL，无外部素材）。"""
+"""生成主窗顶部横幅（纯 PIL，无外部素材）。v2.19：更克制的设计——左圆点标记 + 字标 + 右侧版本胶囊。"""
 import pathlib
+
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "assets" / "banner.png"
-W, H = 458, 52
-FONT = r"C:\Windows\Fonts\msyhbd.ttc"
-FONT2 = r"C:\Windows\Fonts\msyh.ttc"
+W, H = 458, 46
+FONT_B = r"C:\Windows\Fonts\msyhbd.ttc"
+FONT_R = r"C:\Windows\Fonts\msyh.ttc"
+
+
+def lerp(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 def main() -> int:
-    img = Image.new("RGB", (W, H), "#0b0f15")
+    img = Image.new("RGB", (W, H), "#0d1117")
     d = ImageDraw.Draw(img)
-    # 左侧渐隐的强调色斜带
-    for x in range(W):
-        k = max(0.0, 1 - x / (W * 0.62))
-        c = (int(0x0b + (0x25 - 0x0b) * k), int(0x0f + (0x3a - 0x0f) * k),
-             int(0x15 + (0x5c - 0x15) * k))
-        d.line([(x, 0), (x, H)], fill=c)
-    # 细网格纹理
-    for x in range(0, W, 18):
-        d.line([(x, 0), (x, H)], fill=(255, 255, 255, 6) if False else "#101722")
+    # 左上角极淡的光晕，避免整条死黑
+    for y in range(H):
+        for x in range(0, W, 2):
+            k = max(0.0, 1 - (x / (W * 0.5)) ** 2 - (y / (H * 0.9)) ** 2)
+            if k <= 0:
+                continue
+            base = (0x18, 0x1f, 0x2a)
+            c = lerp((0x0d, 0x11, 0x17), base, min(1.0, k * 0.9))
+            d.point((x, y), fill=c)
+            d.point((x + 1, y), fill=c)
     try:
-        f1 = ImageFont.truetype(FONT, 17)
-        f2 = ImageFont.truetype(FONT2, 10)
-    except Exception:
-        f1 = f2 = ImageFont.load_default()
-    d.text((16, 8), "屏幕问答", font=f1, fill="#eaf1ff")
-    d.text((16, 32), "截屏 · 读题 · 作答", font=f2, fill="#7f8ea3")
-    d.text((W - 14, 12), "DeepSeek", font=f2, fill="#4d9dff", anchor="ra")
-    d.text((W - 14, 28), "v2.17", font=f2, fill="#3ddc84", anchor="ra")
-    d.line([(0, H - 1), (W, H - 1)], fill="#1d2836")
+        fb = ImageFont.truetype(FONT_B, 16)
+        fr = ImageFont.truetype(FONT_R, 9)
+    except Exception:  # noqa: BLE001
+        fb = fr = ImageFont.load_default()
+
+    # 标记：圆点 + 方框，暗示"取景框"
+    d.rounded_rectangle([16, 14, 34, 32], radius=5, outline="#4d9dff", width=2)
+    d.ellipse([22, 20, 28, 26], fill="#4d9dff")
+    d.text((42, 9), "屏幕问答", font=fb, fill="#e6edf3")
+    d.text((42, 28), "截屏 · 读题 · 作答", font=fr, fill="#6e7781")
+
+    # 右侧版本胶囊
+    ver = "v2.19"
+    tw = fr.getlength(ver)
+    d.rounded_rectangle([W - 16 - tw - 16, 13, W - 16, 33], radius=10, fill="#17263d")
+    d.text((W - 16 - tw - 8, 18), ver, font=fr, fill="#4d9dff")
+    # 底部分隔线
+    d.line([(0, H - 1), (W, H - 1)], fill="#1f2733")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     img.save(OUT)
     print("saved", OUT, img.size)

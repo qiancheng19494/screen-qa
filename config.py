@@ -97,7 +97,7 @@ DEFAULTS = {
     "win_size": "",
     "dock": "corner",
     "accent": "auto",
-    "login": True,
+    "login": False,
     "cloud_base": "",
     "cloud_token": "",
     "cloud_enabled": False,

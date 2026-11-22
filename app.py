@@ -73,21 +73,21 @@ MODELS = ["deepseek-chat", "deepseek-reasoner"]
 SAMPLE_CHOICES = ["1", "2", "3", "5"]
 
 DARK_UI = {
-    "bg": "#0a0c10",
-    "card": "#131820",
-    "card2": "#0d1117",
-    "border": "#232b38",
-    "text": "#e9ecf2",
-    "dim": "#98a2b3",
-    "muted": "#6a7486",
+    "bg": "#0d1117",
+    "card": "#161b22",
+    "card2": "#1b222c",
+    "border": "#2a3341",
+    "text": "#e6edf3",
+    "dim": "#9aa7b4",
+    "muted": "#6e7781",
     "accent": "#4d9dff",
     "green": "#3ddc84",
-    "accent_bg": "#16233a",
-    "green_bg": "#0d2a1c",
-    "amber": "#ffc857",
-    "amber_bg": "#2b2310",
-    "red": "#ff6b6b",
-    "red_bg": "#2b1416",
+    "accent_bg": "#17263d",
+    "green_bg": "#0e2a1d",
+    "amber": "#f0b429",
+    "amber_bg": "#2a2211",
+    "red": "#f67575",
+    "red_bg": "#2c1618",
 }
 LIGHT_UI = {
     "bg": "#eef1f6",
@@ -505,6 +505,7 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
                      {"role": "user", "content": rr.text[:4000]}],
                     temperature=0.0, max_tokens=900, model=cfg.get("model"),
                 ).strip()
+                translation = latexfmt.pretty(str(translation or '').strip()).replace('$', '').strip()
             except Exception as exc:  # noqa: BLE001
                 emit("log", f"翻译失败（不影响作答）：{exc}")
 
@@ -715,10 +716,12 @@ class Pill(tk.Canvas):
 
     KINDS = {
         "primary": ("#4d9dff", "#07121f", "#71b4ff"),
-        "ghost": ("#1a212c", "#dde3ec", "#242d3b"),
+        "ghost": ("#1b222c", "#c9d4e0", "#242d3b"),
         "success": ("#10301e", "#54eda0", "#17452c"),
         "danger": ("#331a1d", "#ff9b9b", "#48262b"),
-        "flat": ("#0d1117", "#98a2b3", "#1a212c"),
+        "flat": ("#0d1117", "#9aa7b4", "#161b22"),
+        "tab": ("#17263d", "#4d9dff", "#1d2f4b"),
+        "tab_off": ("#161b22", "#9aa7b4", "#1b222c"),
     }
 
     def __init__(self, master, text, command=None, kind="ghost", height=34,
@@ -1123,17 +1126,16 @@ class App:
         self.grad.pack(fill="x", pady=(9, 0))
 
         # ---- 答案卡
-        card = tk.Frame(wrap, bg=UI["card"], highlightbackground=UI["border"],
-                        highlightthickness=1)
-        card.pack(fill="x", pady=(11, 9))
+        card = tk.Frame(wrap, bg=UI["card"], highlightthickness=0, bd=0)
+        card.pack(fill="x", pady=(12, 12))
         # 左侧 3px 色条：随置信度变色，一眼看出这题靠不靠谱
         self.edge = tk.Frame(card, bg=UI["accent"], width=3)
         self.edge.pack(side="left", fill="y")
         inner = tk.Frame(card, bg=UI["card"])
-        inner.pack(side="left", fill="both", expand=True, padx=(13, 15), pady=14)
+        inner.pack(side="left", fill="both", expand=True, padx=(18, 16), pady=17)
         self.ans = tk.Label(inner, text="按 Ctrl+Alt+Q 圈住题目", bg=UI["card"],
                             fg=UI["dim"],
-                            font=(FONT, max(11, round(16 * self.font_scale)), "bold"),
+                            font=(FONT, max(12, round(23 * self.font_scale)), "bold"),
                             justify="left", anchor="w", wraplength=380)
         self.ans.pack(fill="x")
         chips = tk.Frame(inner, bg=UI["card"])
@@ -1157,7 +1159,7 @@ class App:
         # ---- 选项行
         opts = tk.Frame(wrap, bg=bg)
         opts.pack(fill="x", pady=(0, 8))
-        tk.Label(opts, text="识别", bg=bg, fg=UI["muted"], font=(FONT, 9)).pack(side="left")
+        tk.Label(opts, text="识 别", bg=bg, fg=UI["muted"], font=(FONT, 8)).pack(side="left")
         self.reader_var = tk.StringVar(value=self._reader_label())
         self.reader_box = tk.OptionMenu(opts, self.reader_var, *READER_LABELS,
                                         command=lambda *_: self._on_reader_change())
@@ -1251,9 +1253,8 @@ class App:
         self.text.bind("<Key>", self._block_keys)
 
         # ---- 操作（包在一张卡片里，视觉上成组）
-        controls = tk.Frame(wrap, bg=UI["card"], highlightbackground=UI["border"],
-                            highlightthickness=1)
-        controls.pack(fill="x", pady=(2, 9), before=det)
+        controls = tk.Frame(wrap, bg=UI["card"], highlightthickness=0, bd=0)
+        controls.pack(fill="x", pady=(4, 12), before=det)
         cpad = tk.Frame(controls, bg=UI["card"])
         cpad.pack(fill="x", padx=10, pady=10)
         # ---- 分组标签：作答 / 工具 / 记录（一页只显示一组，窗口更清爽）
@@ -1262,7 +1263,7 @@ class App:
         self.tab_pills = {}
         for _name in ("\u4f5c\u7b54", "\u5de5\u5177", "\u8bb0\u5f55"):
             _p = Pill(tabs, _name, lambda n=_name: self._show_page(n),
-                      kind="flat", width=54, height=24, font_size=9)
+                      kind="tab_off", width=54, height=24, font_size=9)
             _p.pack(side="left", padx=(0, 6))
             self.tab_pills[_name] = _p
         self.pages = {_n: tk.Frame(cpad, bg=UI["card"])
@@ -1279,12 +1280,7 @@ class App:
         self.b_copy = Pill(bar, prompts.L("copy"), self.copy_answer, kind="ghost", width=76)
         self.b_copy.pack(side="right")
         self.b_copy.set_enabled(False)
-        self.b_steps = Pill(bar, prompts.L("steps"), self.copy_steps, kind="ghost", width=54)
-        self.b_steps.pack(side="right", padx=(0, 7))
-        self.b_steps.set_enabled(False)
-        self.b_bad = Pill(bar, prompts.L("bad"), self.mark_error, kind="ghost", width=54)
-        self.b_bad.pack(side="right", padx=(0, 7))
-        self.b_bad.set_enabled(False)
+        pass
 
         # 第三行：函数图像 / 朗读 / 迷你浮窗
         bar3 = tk.Frame(self.pages["\u5de5\u5177"], bg=UI["card"])
@@ -1310,6 +1306,15 @@ class App:
         self.b_open = Pill(bar3, prompts.OPEN_LABEL, self.open_image,
                            kind="ghost", width=56)
         self.b_open.pack(side="left", padx=(7, 0))
+
+        self.b_steps = Pill(bar3, prompts.L("steps"), self.copy_steps,
+                            kind="ghost", width=54)
+        self.b_steps.pack(side="right", padx=(7, 0))
+        self.b_steps.set_enabled(False)
+        self.b_bad = Pill(bar3, prompts.L("bad"), self.mark_error,
+                          kind="ghost", width=54)
+        self.b_bad.pack(side="right", padx=(7, 0))
+        self.b_bad.set_enabled(False)
 
         # 第四行：判卷 / 练一练 / 导出卡片 / 重复上次区域
         bar4 = tk.Frame(self.pages["\u5de5\u5177"], bg=UI["card"])
@@ -1405,7 +1410,7 @@ class App:
                 f_.pack_forget()
         for n_, pill_ in getattr(self, "tab_pills", {}).items():
             try:
-                pill_.set_kind("primary" if n_ == name else "flat")
+                pill_.set_kind("tab" if n_ == name else "tab_off")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -3170,7 +3175,8 @@ class App:
                 avg = float(stats.get("avg_cost") or 0)
                 left = ""
                 if avg > 0 and info.get("amount"):
-                    left = f"，按最近均题 ¥{avg:.4f} 约还能做 {int(info['amount'] / avg)} 题"
+                    left = f" · \U0001F4B0 {info['amount']:.2f} {info.get('currency', 'CNY')}" \
+                           f" · 还能约 {int(info['amount'] / avg)} 题"
                 text = (f"余额 {info.get('amount', 0):.2f} {info.get('currency', 'CNY')}"
                         f"{left}\n今日 {stats['count']} 题 · 约 ¥{stats['cost']:.4f} · "
                         f"{stats['tokens_in'] + stats['tokens_out']} tokens")
@@ -3969,6 +3975,7 @@ class App:
             self.cfg["mini"] = bool(mini_var.get())
             self.cfg["plot"] = bool(plot_var.get())
             self.cfg["clip_fallback"] = bool(clipfb_var.get())
+            self.cfg["login"] = bool(login_var.get())
             self.cfg["adaptive"] = bool(adaptive_var.get())
             self.cfg["stream"] = bool(stream_var.get())
             self.cfg["fuzzy_cache"] = bool(fuzzy_var.get())
