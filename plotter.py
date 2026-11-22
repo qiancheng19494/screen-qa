@@ -368,9 +368,11 @@ def plot_multi(exprs, width: int = 560, height: int = 400):
         seen.add(r)
         X, Y = sx(r), sy(max(min(yy, ymax), ymin))
         d.ellipse([X - 4, Y - 4, X + 4, Y + 4], fill="#3ddc84")
-        tx = min(max(X + 6, left + 2), right - 60)
-        ty = max(Y - 20 - (shown % 2) * 14, top + 2)
-        d.text((tx, ty), label, font=font_b, fill="#3ddc84")
+        ty = max(Y - 20 - (shown % 3) * 16, top + 2)
+        if r < 0:
+            d.text((max(X - 6, left + 2), ty), label, font=font_b, fill="#3ddc84", anchor="ra")
+        else:
+            d.text((min(X + 6, right - 60), ty), label, font=font_b, fill="#3ddc84")
         shown += 1
 
     for idx in range(len(funcs)):
