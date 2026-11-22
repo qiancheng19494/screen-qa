@@ -48,3 +48,10 @@ _desk.png
 错题卡片.txt
 _update/
 错题卡片*.txt
+server/sqa.db
+server/sqa.db-shm
+server/sqa.db-wal
+server/secret.key
+server/_srv.log
+server/_upload.png
+server/data/

@@ -18,6 +18,19 @@ class ApiError(RuntimeError):
         self.status = status
 
 
+_CLOUD = {"base": "", "token": ""}
+
+
+def set_cloud(base: str, token: str) -> None:
+    """设置云端代理：之后所有 DeepSeekClient 自动改走 base + /api/proxy。"""
+    _CLOUD["base"] = (base or "").rstrip("/")
+    _CLOUD["token"] = token or ""
+
+
+def cloud_mode() -> bool:
+    return bool(_CLOUD["base"] and _CLOUD["token"])
+
+
 class DeepSeekClient:
     def __init__(
         self,
@@ -26,6 +39,8 @@ class DeepSeekClient:
         model: str = "deepseek-chat",
         timeout: int = 180,
     ):
+        if _CLOUD["base"] and _CLOUD["token"]:
+            base_url, api_key = _CLOUD["base"] + "/api/proxy", _CLOUD["token"]
         self.api_key = (api_key or "").strip()
         self.base_url = (base_url or "https://api.deepseek.com").rstrip("/")
         self.model = model

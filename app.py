@@ -42,6 +42,7 @@ if str(ROOT) not in sys.path:
 
 import capture  # noqa: E402
 import prompts
+import cloud as cloud_mod
 import config as cfg_mod  # noqa: E402
 import extras
 import latexfmt
@@ -3270,6 +3271,106 @@ class App:
 
 
     # ------------------------------------------------------------ 账本
+    def open_cloud_dialog(self):
+        """云端：地址/令牌/登录注册/同步/测试。"""
+        win = tk.Toplevel(self.root)
+        win.title("云端（模型代理 + 记录同步）")
+        win.configure(bg=UI["bg"])
+        win.geometry("520x330")
+        win.transient(self.root)
+        bg, card = UI["bg"], UI["card"]
+        tk.Label(win, text="把服务器地址填成 http://你的IP:端口；令牌登录后自动填。",
+                 bg=bg, fg=UI["muted"], font=(FONT, 8), wraplength=480,
+                 justify="left").pack(anchor="w", padx=18, pady=(14, 6))
+        base_var = tk.StringVar(value=self.cfg.get("cloud_base", ""))
+        tok_var = tk.StringVar(value=self.cfg.get("cloud_token", ""))
+
+        def field(label, var, show=""):
+            row = tk.Frame(win, bg=bg)
+            row.pack(fill="x", padx=18, pady=3)
+            tk.Label(row, text=label, bg=bg, fg=UI["dim"], font=(FONT, 9),
+                     width=8, anchor="w").pack(side="left")
+            ent = tk.Entry(row, textvariable=var, show=show, bg=card, fg=UI["text"],
+                           insertbackground=UI["text"], relief="flat", bd=5,
+                           highlightthickness=1, highlightbackground=UI["border"],
+                           highlightcolor=UI["accent"], font=(FONT, 10))
+            ent.pack(side="left", fill="x", expand=True)
+            return ent
+
+        field("服务器", base_var)
+        field("令牌", tok_var, show="\u2022")
+        tip = tk.Label(win, text="", bg=bg, fg=UI["dim"], font=(FONT, 8), wraplength=480,
+                       justify="left")
+        tip.pack(anchor="w", padx=18, pady=(6, 0))
+
+        def save_cloud(enabled):
+            self.cfg["cloud_base"] = base_var.get().strip().rstrip("/")
+            self.cfg["cloud_token"] = tok_var.get().strip()
+            self.cfg["cloud_enabled"] = bool(enabled)
+            cfg_mod.save(self.cfg)
+            import deepseek_api as _dsa
+            if enabled and self.cfg["cloud_base"] and self.cfg["cloud_token"]:
+                _dsa.set_cloud(self.cfg["cloud_base"], self.cfg["cloud_token"])
+                tip.configure(text="已开启云端代理：接下来的作答走你的服务器（本机 K不参与）。"
+                                   .replace(" K不", "key 不"))
+                self.note("云端代理已开启")
+            else:
+                _dsa.set_cloud("", "")
+                tip.configure(text="已关闭云端代理：恢复用本机 Key 直连。")
+                self.note("云端代理已关闭")
+
+        def do_login(register=False):
+            from tkinter import simpledialog
+            name = simpledialog.askstring("云端账号", "用户名（2-20 字）", parent=win)
+            if not name:
+                return
+            pw = simpledialog.askstring("云端账号", "密码（至少 6 位）", parent=win, show="\u2022")
+            if not pw:
+                return
+            out = cloud_mod.login(base_var.get().strip(), name, pw, register=register)
+            if out.get("token"):
+                tok_var.set(out["token"])
+                tip.configure(text=f"登录成功：{out.get('user', {}).get('name', name)}")
+                save_cloud(True)
+            else:
+                tip.configure(text="失败：" + str(out.get("error")))
+
+        def do_test():
+            out = cloud_mod.health(base_var.get().strip())
+            tip.configure(text="连通：" + str(out) if out.get("ok") else "连不上：" + str(out.get("error")))
+
+        def do_sync():
+            base, tok = base_var.get().strip(), tok_var.get().strip()
+            if not (base and tok):
+                tip.configure(text="先登录云端")
+                return
+            since = float(self.cfg.get("cloud_since") or 0)
+            recs = cloud_mod.prepare_records(cfg_mod.PROFILE / "records.jsonl", since)
+            res = cloud_mod.push(base, tok, recs, [])
+            if res.get("error"):
+                tip.configure(text="同步失败：" + str(res["error"]))
+                return
+            got = cloud_mod.pull(base, tok, since)
+            import time as _t
+            self.cfg["cloud_since"] = _t.time()
+            cfg_mod.save(self.cfg)
+            tip.configure(text=f"已上传 {res.get('saved', 0)} 条；云端有 "
+                              f"{len(got.get('records') or [])} 条记录")
+
+        rowb = tk.Frame(win, bg=bg)
+        rowb.pack(fill="x", padx=18, pady=(10, 0))
+        for text, fn, kind in (("登录", lambda: do_login(False), "ghost"),
+                               ("注册", lambda: do_login(True), "ghost"),
+                               ("测试连接", do_test, "ghost"),
+                               ("同步记录", do_sync, "ghost"),
+                               ("开启代理", lambda: save_cloud(True), "primary"),
+                               ("关闭代理", lambda: save_cloud(False), "ghost")):
+            Pill(rowb, text, fn, kind=kind, width=74, height=30).pack(side="left", padx=(0, 8))
+        tk.Label(win, text="说明：开启后模型调用经过你的服务器，客户端不需要 DeepSeek Key；"
+                          "余额查询在云端模式下不可用。",
+                 bg=bg, fg=UI["muted"], font=(FONT, 8), wraplength=480,
+                 justify="left").pack(anchor="w", padx=18, pady=(10, 12))
+
     def open_ledger(self):
         """今日/累计 + 按模型 + 30 天柱状图，可导出 CSV。"""
         try:
@@ -3804,6 +3905,10 @@ class App:
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, prompts.L("queue"), self.retry_queue, kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row7, "\u4e91\u7aef", self.open_cloud_dialog, kind="ghost", width=58,
+             height=30).pack(side="left", padx=(0, 8))
+        Pill(row7, "\u7b49\u5f85", self.retry_queue, kind="ghost", width=58,
+             height=30).pack_forget()
         Pill(row7, prompts.LBL_LEDGER, self.open_ledger, kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
 
@@ -4278,6 +4383,10 @@ def main():
 
     root = tk.Tk()
     root.withdraw()
+    _c0 = cfg_mod.load()
+    if _c0.get("cloud_enabled") and _c0.get("cloud_base") and _c0.get("cloud_token"):
+        import deepseek_api as _dsa
+        _dsa.set_cloud(_c0["cloud_base"], _c0["cloud_token"])
     # 本机账号（可游客进入）：不同用户各自的 records/errors/缓存/配置
     try:
         if cfg_mod.load().get("login", True):

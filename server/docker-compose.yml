@@ -1,0 +1,12 @@
+services:
+  sqa:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"      # 只绑本机，公网走 nginx/caddy 反代 + HTTPS
+    environment:
+      UPSTREAM_BASE: https://api.deepseek.com
+      UPSTREAM_KEY: ${UPSTREAM_KEY:?请设置服务器端 DeepSeek Key}
+      SQA_JWT_SECRET: ${SQA_JWT_SECRET:-请改成一串随机字符}
+    volumes:
+      - ./data:/app/data

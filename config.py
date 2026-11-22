@@ -97,7 +97,12 @@ DEFAULTS = {
     "win_size": "",
     "dock": "corner",
     "accent": "auto",
-    "login": True,             # "WxH+X+Y"
+    "login": True,
+    "cloud_base": "",
+    "cloud_token": "",
+    "cloud_enabled": False,
+    "cloud_sync": True,
+    "cloud_since": 0.0,             # "WxH+X+Y"
     "check_update": True,       # 启动时检查 GitHub 有没有新版本
     "tray": True,               # 关窗口时缩到托盘（而不是退出）
     "autostart": False,

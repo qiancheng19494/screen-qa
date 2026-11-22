@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>屏幕问答 · 网页版</title>
+<style>
+  :root{--bg:#0a0c10;--card:#131820;--line:#232b38;--tx:#e9ecf2;--dim:#98a2b3;--ac:#4d9dff;--ok:#3ddc84}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 "Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:22px 16px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  textarea{width:100%;min-height:110px;background:#0d1117;color:var(--tx);border:1px solid var(--line);
+           border-radius:8px;padding:10px;font:14px/1.5 inherit;resize:vertical}
+  input[type=text],input[type=password]{width:100%;background:#0d1117;color:var(--tx);border:1px solid var(--line);
+           border-radius:8px;padding:9px 10px;font:14px inherit;margin:4px 0 10px}
+  button{background:var(--ac);color:#06101f;border:0;border-radius:8px;padding:9px 16px;font:600 14px inherit;cursor:pointer}
+  button.ghost{background:transparent;color:var(--tx);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .ans{font-size:24px;font-weight:700;color:var(--ok);word-break:break-all}
+  .fill{font-size:15px;color:#9fe8c1;margin-top:6px}
+  pre{white-space:pre-wrap;word-break:break-word;color:var(--dim);font:13px/1.6 ui-monospace,Consolas,monospace;
+      background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:320px;overflow:auto}
+  .tag{display:inline-block;font-size:12px;color:var(--dim);border:1px solid var(--line);
+       border-radius:20px;padding:1px 9px;margin-right:6px}
+  .rowline{display:flex;gap:14px;flex-wrap:wrap;color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>屏幕问答 · 网页版</h1>
+  <div class="sub">把题目粘进来（英文/中文都行）。手机上也能用。</div>
+
+  <div class="card" id="authCard">
+    <div style="font-weight:600;margin-bottom:6px">登录 / 注册（可选）</div>
+    <div class="sub" style="margin-bottom:8px">不登录也能试 3 次；登录后按额度使用，记录可同步到桌面端。</div>
+    <input type="text" id="name" placeholder="用户名" autocomplete="username">
+    <input type="password" id="pw" placeholder="密码（至少 6 位）" autocomplete="current-password">
+    <div class="row">
+      <button id="btnLogin">登录</button>
+      <button class="ghost" id="btnReg">注册</button>
+      <span id="authMsg" class="sub" style="margin:0"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <textarea id="q" placeholder="例如：Solve for x.  9x + 6 = 60"></textarea>
+    <div class="row">
+      <button id="btnAsk">解题</button>
+      <label class="ghost" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer">
+        上传题图<input type="file" id="file" accept="image/*" style="display:none">
+      </label>
+      <span id="msg" class="sub" style="margin:0"></span>
+    </div>
+  </div>
+
+  <div class="card" id="outCard" style="display:none">
+    <div class="ans" id="ans"></div>
+    <div class="fill" id="fill"></div>
+    <div class="rowline" style="margin-top:8px"><span id="meta"></span></div>
+    <pre id="why"></pre>
+  </div>
+
+  <div class="sub">隐私：题目文字会发给模型服务；服务器不保存题目正文，只记 用量（题数/token/费用）。</div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("sqa_token") || "";
+const H = () => token ? {"Authorization": "Bearer " + token} : {};
+
+$("btnLogin").onclick = async () => {
+  const r = await fetch("/api/login", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name:$("name").value, password:$("pw").value})});
+  const j = await r.json();
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token);
+    $("authMsg").textContent = "已登录：" + j.user.name; }
+  else $("authMsg").textContent = j.error || "登录失败";
+};
+$("btnReg").onclick = async () => {
+  const r = await fetch("/api/register", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name:$("name").value, password:$("pw").value})});
+  const j = await r.json();
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token);
+    $("authMsg").textContent = "注册成功：" + j.user.name; }
+  else $("authMsg").textContent = j.error || "注册失败";
+};
+
+async function solveText(t){
+  $("msg").textContent = "思考中…"; $("btnAsk").disabled = true;
+  try{
+    const r = await fetch("/api/solve", {method:"POST",
+      headers: Object.assign({"Content-Type":"application/json"}, H()),
+      body: JSON.stringify({text: t})});
+    const j = await r.json();
+    if (j.error) { $("msg").textContent = "出错：" + j.error; return; }
+    $("outCard").style.display = "block";
+    $("ans").textContent = j.answer || "";
+    $("fill").textContent = j.fill ? ("填入答案：" + j.fill) : "";
+    $("meta").innerHTML = `<span class="tag">${(j.usage&&j.usage.total_tokens)||0} tokens</span>` +
+      `<span class="tag">¥${(j.cost||0).toFixed(4)}</span>`;
+    $("why").textContent = j.reasoning || "";
+    if (j.fill) { try { await navigator.clipboard.writeText(j.fill); $("msg").textContent = "已复制填入答案"; }
+                  catch(e) { $("msg").textContent = ""; } }
+  } finally { $("btnAsk").disabled = false; if ($("msg").textContent === "思考中…") $("msg").textContent = ""; }
+}
+$("btnAsk").onclick = () => { const t = $("q").value.trim();
+  if (t.length < 4) { $("msg").textContent = "题目太短"; return; } solveText(t); };
+$("file").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  $("msg").textContent = "上传识别中…";
+  const b64 = await new Promise(res => { const fr = new FileReader();
+    fr.onload = () => res(fr.result); fr.readAsDataURL(f); });
+  const r = await fetch("/api/solve_image", {method:"POST",
+    headers: Object.assign({"Content-Type":"application/json"}, H()),
+    body: JSON.stringify({image_b64: b64})});
+  const j = await r.json();
+  if (j.error) { $("msg").textContent = "识别失败：" + j.error; return; }
+  $("q").value = j.text || ""; $("outCard").style.display = "block";
+  $("ans").textContent = j.answer || ""; $("fill").textContent = j.fill ? ("填入答案：" + j.fill) : "";
+  $("why").textContent = j.reasoning || ""; $("msg").textContent = "识别完成";
+};
+</script>
+</body>
+</html>
