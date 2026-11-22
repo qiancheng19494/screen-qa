@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 import questions as qfmt
@@ -209,7 +210,14 @@ class Solver:
                                        stream_cb=cb)
                 return idx, out, None
             except Exception as exc:  # noqa: BLE001
-                return idx, None, exc
+                # 偶发 429/超时：等一秒重试一次，失败样本不白扔
+                try:
+                    time.sleep(0.9)
+                    out = self.client.chat(messages, temperature=temp,
+                                           max_tokens=2048, stream_cb=None)
+                    return idx, out, None
+                except Exception:  # noqa: BLE001
+                    return idx, None, exc
 
         answers: list[str] = []
         details: list[str] = []

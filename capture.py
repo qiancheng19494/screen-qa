@@ -473,3 +473,55 @@ def grab_window(hwnd: int) -> Optional[Image.Image]:
         return img
     except Exception:  # noqa: BLE001
         return None
+
+def autocrop(img, tol=20, pad=6, max_side=420):
+    """裁掉四周纯色留白（整屏截图常见大片空白），返回裁好的图。"""
+    try:
+        from collections import Counter
+        im = img.convert("RGB")
+        w, h = im.size
+        if w < 80 or h < 60:
+            return img
+        scale = min(1.0, max_side / float(w))
+        sw, sh = max(2, int(w * scale)), max(2, int(h * scale))
+        small = im.resize((sw, sh))
+        px = small.load()
+        cnt = Counter()
+        for x in range(0, sw, max(1, sw // 50)):
+            cnt[px[x, 0]] += 1
+            cnt[px[x, sh - 1]] += 1
+        for y in range(0, sh, max(1, sh // 50)):
+            cnt[px[0, y]] += 1
+            cnt[px[sw - 1, y]] += 1
+        bg = cnt.most_common(1)[0][0]
+
+        def same(c):
+            return (abs(c[0] - bg[0]) <= tol and abs(c[1] - bg[1]) <= tol
+                    and abs(c[2] - bg[2]) <= tol)
+
+        left, top, right, bottom = sw, sh, -1, -1
+        for y in range(sh):
+            for x in range(sw):
+                if not same(px[x, y]):
+                    if x < left:
+                        left = x
+                    if x > right:
+                        right = x
+                    if y < top:
+                        top = y
+                    if y > bottom:
+                        bottom = y
+        if right <= left or bottom <= top:
+            return img
+        if left <= 1 and top <= 1 and right >= sw - 2 and bottom >= sh - 2:
+            return img
+        inv = 1.0 / scale
+        l = max(0, int(left * inv) - pad)
+        t = max(0, int(top * inv) - pad)
+        r = min(w, int((right + 1) * inv) + pad)
+        b = min(h, int((bottom + 1) * inv) + pad)
+        if (r - l) < 120 or (b - t) < 60:
+            return img
+        return im.crop((l, t, r, b))
+    except Exception:  # noqa: BLE001
+        return img

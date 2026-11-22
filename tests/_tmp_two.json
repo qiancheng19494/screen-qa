@@ -1,0 +1,10 @@
+[
+  {
+    "image": "cases/c31_ineq_mul.png",
+    "expect": [
+      "x > 3"
+    ],
+    "mode": "text",
+    "note": "一元一次不等式（原期望写成 5 是错的，已修正）"
+  }
+]

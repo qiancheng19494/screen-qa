@@ -69,8 +69,11 @@ DEFAULTS = {
     # v2.6：纯文字作答 / 窗口截图 / 迷你浮窗 / 朗读 / 剪贴板监听 / 函数图像 / 考试日期
     "hotkey_text": "ctrl+alt+t",
     "hotkey_mini": "ctrl+alt+m",
+    "hotkey_repeat": "ctrl+alt+shift+q",
     "watch_clip": False,
     "clip_fallback": True,
+    "autocrop": True,
+    "budget_day": 1.0,
     "adaptive": True,        # 自适应采样：单次作答 + 验算通过就不再问
     "stream": True,          # 流式输出（等待感更轻）
     "fuzzy_cache": True,     # 模糊缓存：题面差几个字也能命中

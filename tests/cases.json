@@ -243,5 +243,169 @@
       "12"
     ],
     "note": "自建用例示例（分数题）"
+  },
+  {
+    "image": "cases/c31_ineq_mul.png",
+    "expect": [
+      "x > 3"
+    ],
+    "mode": "text",
+    "note": "一元一次不等式（原期望写成 5 是错的，已修正）"
+  },
+  {
+    "image": "cases/c32_ineq_neg.png",
+    "expect": [
+      "-3"
+    ],
+    "mode": "value",
+    "note": "负系数不等式"
+  },
+  {
+    "image": "cases/c33_paren.png",
+    "expect": [
+      "7"
+    ],
+    "mode": "value",
+    "note": "带括号一次方程"
+  },
+  {
+    "image": "cases/c34_square.png",
+    "expect": [
+      "-7",
+      "7"
+    ],
+    "mode": "set",
+    "note": "平方根两解"
+  },
+  {
+    "image": "cases/c35_quad2.png",
+    "expect": [
+      "-2",
+      "2"
+    ],
+    "mode": "set",
+    "note": "二次方程"
+  },
+  {
+    "image": "cases/c36_log8.png",
+    "expect": [
+      "3"
+    ],
+    "mode": "value",
+    "note": "对数求值"
+  },
+  {
+    "image": "cases/c37_pow5.png",
+    "expect": [
+      "32"
+    ],
+    "mode": "value",
+    "note": "指数求值"
+  },
+  {
+    "image": "cases/c38_slope2.png",
+    "expect": [
+      "2"
+    ],
+    "mode": "value",
+    "note": "斜率-负坐标"
+  },
+  {
+    "image": "cases/c39_percent65.png",
+    "expect": [
+      "26"
+    ],
+    "mode": "value",
+    "note": "百分比"
+  },
+  {
+    "image": "cases/c40_prop.png",
+    "expect": [
+      "15"
+    ],
+    "mode": "value",
+    "note": "比例"
+  },
+  {
+    "image": "cases/c41_avg.png",
+    "expect": [
+      "18"
+    ],
+    "mode": "value",
+    "note": "平均数"
+  },
+  {
+    "image": "cases/c42_interest.png",
+    "expect": [
+      "60"
+    ],
+    "mode": "value",
+    "note": "单利"
+  },
+  {
+    "image": "cases/c43_dist.png",
+    "expect": [
+      "220"
+    ],
+    "mode": "value",
+    "note": "路程应用题"
+  },
+  {
+    "image": "cases/c44_fvalue2.png",
+    "expect": [
+      "10"
+    ],
+    "mode": "value",
+    "note": "二次函数值"
+  },
+  {
+    "image": "cases/c45_abs.png",
+    "expect": [
+      "-2",
+      "8"
+    ],
+    "mode": "set",
+    "note": "绝对值方程",
+    "known_ocr_limit": true
+  },
+  {
+    "image": "cases/c46_halfx.png",
+    "expect": [
+      "8"
+    ],
+    "mode": "value",
+    "note": "分数系数"
+  },
+  {
+    "image": "cases/c47_eval_line.png",
+    "expect": [
+      "-1"
+    ],
+    "mode": "value",
+    "note": "一次函数代入"
+  },
+  {
+    "image": "cases/c48_exp16.png",
+    "expect": [
+      "4"
+    ],
+    "mode": "value",
+    "note": "指数方程"
+  },
+  {
+    "image": "cases/c49_percent2.png",
+    "expect": [
+      "24"
+    ],
+    "mode": "value",
+    "note": "百分比"
+  },
+  {
+    "image": "cases/c50_sqrtx.png",
+    "expect": [
+      "81"
+    ],
+    "mode": "value",
+    "note": "平方根方程"
   }
 ]

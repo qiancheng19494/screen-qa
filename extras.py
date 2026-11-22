@@ -492,3 +492,89 @@ def apply_update(src=None, dest=None, keep=("config.json",), timeout: int = 0) -
         except Exception:  # noqa: BLE001
             skipped += 1
     return {"copied": copied, "skipped": skipped, "src": str(src_dir), "dst": str(dst_dir)}
+
+def export_card(rec: dict, shot_path: str, path, width: int = 560) -> str:
+    """把一题（题干 + 答案 + 置信度 + 截图）排成一张 PNG 卡片。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    def _f(size, bold=False):
+        for name in (("msyhbd.ttc" if bold else "msyh.ttc"), "segoeui.ttf"):
+            try:
+                return ImageFont.truetype(f"C:/Windows/Fonts/{name}", size)
+            except Exception:  # noqa: BLE001
+                continue
+        return ImageFont.load_default()
+
+    def _wrap(d, text, font, maxw):
+        lines, cur = [], ""
+        for ch in str(text):
+            if ch == "\n":
+                lines.append(cur)
+                cur = ""
+                continue
+            if d.textlength(cur + ch, font=font) <= maxw:
+                cur += ch
+            else:
+                lines.append(cur)
+                cur = ch
+        if cur:
+            lines.append(cur)
+        return lines or [""]
+
+    pad = 26
+    f_title = _f(19, True)
+    f_ans = _f(34, True)
+    f_mid = _f(15)
+    f_small = _f(13)
+
+    tmp = Image.new("RGB", (width, 10), "#0b0e14")
+    d = ImageDraw.Draw(tmp)
+    title_lines = _wrap(d, rec.get("title", ""), f_mid, width - pad * 2)[:4]
+
+    shot = None
+    sp = shot_path or ""
+    try:
+        if sp:
+            shot = Image.open(sp).convert("RGB")
+            sw = width - pad * 2
+            sh = int(shot.height * sw / shot.width)
+            if sh > 460:
+                sh = 460
+                sw = int(shot.width * sh / shot.height)
+            shot = shot.resize((sw, sh))
+    except Exception:  # noqa: BLE001
+        shot = None
+
+    h = pad + 34 + len(title_lines) * 22 + 20 + 52 + 26
+    if shot:
+        h += shot.height + 18
+    h += 40 + pad
+    img = Image.new("RGB", (width, h), "#0b0e14")
+    dr = ImageDraw.Draw(img)
+    dr.rectangle([0, 0, width, 4], fill="#4d9dff")
+    y = pad
+    dr.text((pad, y), "屏幕问答 · 单题卡片", font=f_title, fill="#e9ecf2")
+    dr.text((width - pad - 150, y + 6), rec.get("ts", ""), font=f_small, fill="#6a7486")
+    y += 38
+    for line in title_lines:
+        dr.text((pad, y), line, font=f_mid, fill="#c9ccd4")
+        y += 22
+    y += 12
+    ans = rec.get("answer") or "(无答案)"
+    dr.text((pad, y), str(ans)[:40], font=f_ans, fill="#3ddc84")
+    y += 46
+    bits = [rec.get("confidence", ""), f"{float(rec.get('elapsed') or 0):.1f}s",
+            rec.get("model", "")]
+    if rec.get("fill"):
+        bits.insert(0, "填入：" + str(rec["fill"]))
+    dr.text((pad, y), "  ·  ".join([b for b in bits if b]), font=f_small, fill="#98a2b3")
+    y += 30
+    if shot:
+        img.paste(shot, (pad, y))
+        y += shot.height + 18
+    dr.line([pad, h - pad - 12, width - pad, h - pad - 12], fill="#232b38")
+    dr.text((pad, h - pad - 4), "由「屏幕问答 · DeepSeek」生成", font=f_small, fill="#6a7486")
+    path = str(path)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    img.save(path)
+    return path

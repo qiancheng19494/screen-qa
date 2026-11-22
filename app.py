@@ -25,7 +25,7 @@ from pathlib import Path
 
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 def _app_dir() -> "Path":
     """打包成 exe 后，程序目录 = exe 所在目录；源码运行时 = 本文件目录。"""
@@ -898,6 +898,10 @@ class App:
         self.multi_idx = 0
         self.answers_by_no = {}
         self.recent_shots = []
+        self.last_region = None      # 上次框选的屏幕区域（重复区域热键用）
+        self._budget_warned = False
+        self._bal_warned = False
+        self.judge_text = ""
         self._task_t0 = 0.0
         self._slow_warned = False
         self.tray = None
@@ -1181,6 +1185,25 @@ class App:
         tk.Label(bar3, text="Ctrl+Alt+T 文字", bg=UI["card"], fg=UI["muted"],
                  font=(FONT, 8)).pack(side="right")
 
+        # 第四行：判卷 / 练一练 / 导出卡片 / 重复上次区域
+        bar4 = tk.Frame(cpad, bg=UI["card"])
+        bar4.pack(fill="x", pady=(8, 0))
+        self.b_judge = Pill(bar4, prompts.JUDGE_LABEL, self.judge_answer,
+                            kind="ghost", width=64)
+        self.b_judge.pack(side="left")
+        self.b_judge.set_enabled(False)
+        self.b_practice = Pill(bar4, prompts.PRACTICE_LABEL, self.practice,
+                               kind="ghost", width=64)
+        self.b_practice.pack(side="left", padx=(7, 0))
+        self.b_practice.set_enabled(False)
+        self.b_card = Pill(bar4, prompts.CARD_LABEL, self.export_card,
+                           kind="ghost", width=58)
+        self.b_card.pack(side="left", padx=(7, 0))
+        self.b_card.set_enabled(False)
+        self.b_repeat = Pill(bar4, prompts.REPEAT_LABEL, self.repeat_region,
+                             kind="ghost", width=76)
+        self.b_repeat.pack(side="right")
+
         # 一屏多题时，这里会冒出「复制第 N 题」按钮；空的时候不占高度
         self.multi_bar = tk.Frame(wrap, bg=bg)
         self.multi_bar.pack(fill="x", before=controls)
@@ -1423,6 +1446,7 @@ class App:
 
     def _grab_screen(self):
         """整屏截图，但先把自己藏起来，免得截到自己。"""
+        self.last_region = None
         win = self.root
         was = win.state()
         try:
@@ -1477,6 +1501,17 @@ class App:
             return
         self.last_image_path = str(path)
         self.last_job = ("image", str(path))
+        try:
+            if self.cfg.get("autocrop", True):
+                from PIL import Image as _Img
+                _src = _Img.open(str(path))
+                _cut = capture.autocrop(_src)
+                if _cut.size != _src.size:
+                    _tmp = self._shot_path()
+                    _cut.save(_tmp)
+                    path = str(_tmp)
+        except Exception:  # noqa: BLE001
+            pass
         self._failed = False
         self.busy = True
         self._set_buttons(False)
@@ -1522,11 +1557,12 @@ class App:
         return cfg
 
     def _set_buttons(self, enabled: bool):
-        for b in (self.b_region, self.b_full, self.b_paste):
+        for b in (self.b_region, self.b_full, self.b_paste, self.b_repeat):
             b.set_enabled(enabled)
         if not enabled:
             for b in (self.b_copy, self.b_steps, self.b_bad, self.b_redo,
-                      self.b_plot, self.b_speak):
+                      self.b_plot, self.b_speak, self.b_judge,
+                      self.b_practice, self.b_card):
                 try:
                     b.set_enabled(False)
                 except Exception:  # noqa: BLE001
@@ -1553,6 +1589,7 @@ class App:
                 self.set_status("已取消")
             return None
         if sel.bbox:
+            self.last_region = sel.bbox
             self.cont_region = sel.bbox
             self.cfg["cont_bbox"] = list(sel.bbox)
             cfg_mod.save(self.cfg)
@@ -1787,6 +1824,10 @@ class App:
                     self._show_followup(str(payload))
                 elif kind == "stream":
                     self._on_stream(str(payload))
+                elif kind == "judge":
+                    self._show_judge(str(payload))
+                elif kind == "practice":
+                    self._show_practice(str(payload))
         except queue.Empty:
             pass
 
@@ -1794,7 +1835,9 @@ class App:
             try:
                 while True:
                     name = self.hk.events.get_nowait()
-                    if name == "region":
+                    if name == "repeat":
+                        self.repeat_region()
+                    elif name == "region":
                         self.shot_region()
                     elif name == "full":
                         self.shot_full()
@@ -1842,6 +1885,8 @@ class App:
             # Ctrl+Alt+M：迷你答案条开关
             self.hk.add("follow", self.cfg.get("hotkey_follow", "ctrl+alt+f"),
                         ["ctrl+shift+f", "ctrl+alt+g"])
+            self.hk.add("repeat", self.cfg.get("hotkey_repeat", "ctrl+alt+shift+q"),
+                        ["ctrl+shift+alt+q", "ctrl+alt+shift+w"])
             self.hk.add("mini", self.cfg.get("hotkey_mini", "ctrl+alt+m"),
                         ["ctrl+shift+m", "ctrl+alt+k"])
             if not self.hk.start():
@@ -1935,6 +1980,9 @@ class App:
         self.multi_idx = 0
         self.b_steps.set_enabled(bool(res.reasoning))
         self.b_bad.set_enabled(True)
+        self.b_judge.set_enabled(True)
+        self.b_practice.set_enabled(True)
+        self.b_card.set_enabled(True)
         self.b_speak.set_enabled(True)
         try:
             _expr = plotter.extract_function(payload.get("text") or "")
@@ -1996,6 +2044,18 @@ class App:
         elif chk == "fail":
             bits.insert(0, "⚠ 代入验算不通过")
         self.meta.configure(text=" · ".join(bits))
+        # 预算/余额提醒（每题只看一次，别每题都跳）
+        try:
+            budget = float(self.cfg.get("budget_day", 1.0) or 0)
+            if budget > 0 and not self._budget_warned:
+                st = cfg_mod.daily_stats(self.cfg)
+                if float(st.get("cost", 0)) > budget:
+                    self._budget_warned = True
+                    self.note(prompts.MSG_BUDGET_LOW.format(
+                        cost=float(st["cost"]), budget=budget))
+                    self.chip.configure(bg=UI["amber_bg"], fg=UI["amber"])
+        except Exception:  # noqa: BLE001
+            pass
         self._flash(UI.get(key, UI["accent"]))
         if self.mini is not None:
             try:
@@ -3360,6 +3420,142 @@ class App:
         self.last_image_path = str(path)
         self.set_status("剪贴板截图 → 作答中…")
         self._run_path(path)
+
+    # -------------------------------------------------- 判卷 / 练习 / 卡片 / 重复区域
+    def judge_answer(self):
+        """把参考答案和"学生自己写的答案"一起交给模型批改。"""
+        if not self.last_payload or not self.last_payload.get("ok"):
+            self.set_status(prompts.MSG_NEED_ANSWER)
+            self._beep("warn")
+            return
+        res = self.last_payload.get("result")
+        std = (getattr(res, "fill", "") or getattr(res, "answer", "") or "").strip()
+        try:
+            mine = simpledialog.askstring(
+                prompts.JUDGE_LABEL,
+                "你填的是什么？（留空取消）\n参考答案：" + std,
+                parent=self.root)
+        except Exception:  # noqa: BLE001
+            mine = None
+        if not mine or not mine.strip():
+            self.set_status(prompts.MSG_JUDGE_NOANSWER)
+            return
+        question = (self.last_payload.get("text") or "").strip()[:1500]
+        self.set_status(prompts.MSG_JUDGE_RUN)
+        cfg = self._current_cfg()
+
+        def work():
+            try:
+                cli = DeepSeekClient(
+                    cfg["api_key"], cfg["base_url"], cfg["model"],
+                    int(cfg.get("timeout", 120)))
+                msg = (f"题目：\n{question}\n\n参考答案：{std}\n\n"
+                       f"学生答案：{mine.strip()}")
+                out = cli.chat([{"role": "system", "content": prompts.JUDGE_SYSTEM},
+                                {"role": "user", "content": msg}],
+                               temperature=0.0, max_tokens=900)
+                self.q.put(("judge", out))
+            except Exception as exc:  # noqa: BLE001
+                self.q.put(("judge", f"❌ 批改失败：{exc}"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_judge(self, text):
+        self.judge_text = text
+        self.text.delete("1.0", "end")
+        self.text.insert("end", text, "answer" if "## 判定" in text else "")
+        self.set_status("批改完成（Ctrl+C 可复制）")
+        self.log("批改完成")
+
+    def practice(self):
+        payload = self.last_payload or {}
+        text = (payload.get("text") or "").strip()
+        if not text:
+            self.set_status(prompts.MSG_PRACTICE_NONE)
+            self._beep("warn")
+            return
+        cfg = self._current_cfg()
+        self.set_status(prompts.MSG_PRACTICE_RUN)
+
+        def work():
+            try:
+                cli = DeepSeekClient(
+                    cfg["api_key"], cfg["base_url"], cfg["model"],
+                    int(cfg.get("timeout", 120)))
+                out = cli.chat([{"role": "system", "content": prompts.PRACTICE_SYSTEM},
+                                {"role": "user", "content": text[:1500]}],
+                               temperature=0.8, max_tokens=1200)
+                self.q.put(("practice", out))
+            except Exception as exc:  # noqa: BLE001
+                self.q.put(("practice", f"❌ 生成失败：{exc}"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_practice(self, text):
+        win = tk.Toplevel(self.root)
+        win.title("同类型练习")
+        win.configure(bg=UI["bg"])
+        win.geometry("560x520")
+        apply_icon(win)
+        tk.Label(win, text="同类型练习（3 题，含答案）", bg=UI["bg"], fg=UI["text"],
+                 font=(FONT, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 6))
+        box = tk.Text(win, wrap="word", bg=UI["card2"], fg=UI["text"], bd=0,
+                      relief="flat", padx=14, pady=12, font=(FONT, 10))
+        box.pack(fill="both", expand=True, padx=14)
+        box.insert("end", text)
+        box.configure(state="disabled")
+        row = tk.Frame(win, bg=UI["bg"])
+        row.pack(fill="x", padx=14, pady=10)
+        Pill(row, "复制", lambda: self._copy_text(text), kind="primary",
+             width=72).pack(side="left")
+        Pill(row, "关闭", win.destroy, kind="ghost", width=72).pack(side="right")
+        save = ROOT / "练习"
+        try:
+            save.mkdir(exist_ok=True)
+            (save / (time.strftime("%Y%m%d-%H%M%S") + "-练习.md")).write_text(
+                text, encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        self.set_status("练习已生成（也存到了 练习/ 目录）")
+
+    def export_card(self):
+        """把当前这题导成一张 PNG 卡片。"""
+        payload = self.last_payload or {}
+        res = payload.get("result")
+        if not res:
+            self.set_status(prompts.MSG_NEED_ANSWER)
+            return
+        rec = {"title": (payload.get("text") or "")[:200],
+               "answer": getattr(res, "answer", ""),
+               "fill": getattr(res, "fill", ""),
+               "confidence": getattr(res, "confidence", ""),
+               "elapsed": payload.get("elapsed", 0),
+               "model": self.cfg.get("model", ""),
+               "ts": time.strftime("%Y-%m-%d %H:%M")}
+        out_dir = ROOT / "cards"
+        out = out_dir / (time.strftime("%Y%m%d-%H%M%S") + "-卡片.png")
+        try:
+            extras.export_card(rec, getattr(self, "shot_path", ""), out)
+            self.set_status(prompts.MSG_CARD_OK.format(path=str(out)))
+            self.note(f"卡片已保存 {out}")
+        except Exception as exc:  # noqa: BLE001
+            self.set_status(prompts.MSG_CARD_FAIL.format(err=str(exc)[:80]))
+
+    def repeat_region(self):
+        """用上次框选的区域再截一次（考试时最快）。"""
+        if not self.last_region:
+            self.set_status(prompts.MSG_REPEAT_NONE)
+            self._beep("warn")
+            return
+        if self.busy:
+            return
+        try:
+            self.prev_hwnd = capture.foreground_window()
+            img = capture.grab_bbox(*self.last_region)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"重复区域截图失败：{exc}")
+            return
+        self._start(img)
 
     def capture_window_menu(self):
         wins = capture.list_windows()

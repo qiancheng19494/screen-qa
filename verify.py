@@ -149,6 +149,8 @@ def _equation_pairs(text):
             continue
         if VAR not in lx.lower() and VAR not in rx.lower():
             continue
+        if re.fullmatch(r"[a-zA-Z]", lx.strip()):
+            continue          # "x = 4" 是给定条件，不是要检验的方程
         out.append((lx, rx))
     return out
 
@@ -209,6 +211,8 @@ def _verify_one(question, answer, fill=""):
     q = _norm(question)
     if not q.strip():
         return "skip", "没有题目文本，跳过验算"
+    # OCR 常把 "For y =" 粘成 "Fory ="：补回空格，后面 y = ... 的识别才成立
+    q = re.sub(r"(?<=[a-z])([yg]\s*[=＝])", r" \1", q)
     vals = _answer_values(answer, fill)
     if not vals:
         return "skip", "答案里没有可代入的数值（可能是文字/选项）"
@@ -233,6 +237,25 @@ def _verify_one(question, answer, fill=""):
                 if abs(got - target) <= 1e-6 * scale:
                     return "ok", "f({0:g}) = {1:.6g}，与答案一致".format(arg, target)
                 return "fail", "f({0:g}) 应为 {1:.6g}，但答案是 {2:.6g}".format(arg, target, got)
+
+    # 1b) y = ... 且题目给了 x = k（"find y when x = 4"）→ 算 y(k) 比对
+    m_y = re.search(r"(?:^|\s)y\s*=\s*([^;。,，\n]{1,80})", q)
+    m_x = re.search(r"(?<!\d)x\s*=\s*(-?\d+(?:\.\d+)?)", q)
+    if m_y and m_x and "y" not in m_y.group(1):
+        expr = _clean_expr(re.split(r"[，,;]|find|what|when|evaluate", m_y.group(1))[0])
+        if expr:
+            try:
+                arg = float(m_x.group(1))
+                target = _SafeEval.run(expr, arg)
+            except Exception:  # noqa: BLE001
+                target = None
+            if target is not None and math.isfinite(target):
+                got = vals[0]
+                scale = max(1.0, abs(target), abs(got))
+                if abs(got - target) <= 1e-6 * scale:
+                    return "ok", "x={0:g} 时 y={1:.6g}，与答案一致".format(arg, target)
+                return "fail", "x={0:g} 时 y 应为 {1:.6g}，但答案是 {2:.6g}".format(
+                    arg, target, got)
 
     # 2) 一元方程：候选值都要让方程成立
     eqs = _equation_pairs(q)
