@@ -278,6 +278,41 @@ class Solver:
         t0 = time.time()
         _coding = codingq.is_coding(question_text)
         res = SolveResult(question_text=question_text)
+        # 代码题：走"整段体检"（一次找全 + compile 迭代），比单问单答更贴近作业场景
+        if _coding and getattr(self, "code_sweep", True) and len(question_text.strip().splitlines()) >= 3:
+            try:
+                import codefix
+                t_sweep = time.time()
+                sw = codefix.sweep(question_text, self.client, self.model or "")
+                issues = sw.get("issues") or []
+                code = sw.get("code") or ""
+                res.samples = [code[:2000]] if code else []
+                res.votes = {"pass": 1} if sw.get("ok") else {}
+                res.agreement = 1.0 if sw.get("ok") else 0.6
+                res.confidence = "高" if sw.get("ok") else "中"
+                res.verified = bool(sw.get("ok"))
+                res.check = "ok" if sw.get("ok") else ("fail" if code else "skip")
+                res.check_note = ("修正后的代码语法检查通过" if sw.get("ok")
+                                  else (sw.get("note") or "未能给出可编译的代码"))
+                res.answer = (code.splitlines()[0] if code else "见下方错误清单")
+                res.fill = "见上方代码" if code else ""
+                res.calls = int(sw.get("rounds") or 1)
+                parts = []
+                if issues:
+                    parts.append("## 错误清单\n" + "\n".join(issues))
+                if code:
+                    parts.append("## 修正后的代码\n```python\n" + code + "\n```")
+                parts.append(f"## 编译校验\n{'通过' if sw.get('ok') else '未通过：' + str(sw.get('note') or '')}")
+                res.reasoning = "\n\n".join(parts)
+                res.elapsed = time.time() - t_sweep
+                usage1 = dict(getattr(self.client, "usage_total", {}) or {})
+                res.tokens_in = int(usage1.get("prompt", 0)) - int(usage0.get("prompt", 0))
+                res.tokens_out = int(usage1.get("completion", 0)) - int(usage0.get("completion", 0))
+                if not sw.get("ok"):
+                    res.warnings.append(f"代码体检：{sw.get('note') or '未通过编译'}")
+                return res
+            except Exception as exc:  # noqa: BLE001
+                res.warnings.append(f"代码体检失败，退回普通模式：{exc}")
         # 先把"这题要什么格式"抠出来，既塞进提示词，也对最终答案做后处理
         hints = qfmt.format_hint(question_text)
         hint_line = qfmt.hint_text(hints)
