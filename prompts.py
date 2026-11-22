@@ -139,7 +139,7 @@ MSG_LATEX_COPIED = "已复制 LaTeX。"
 MSG_QUEUE_EMPTY = "没有待重试的任务。"
 MSG_QUEUE_ADDED = "已存进待重试队列（本地），网络恢复后点「待重试」重跑。"
 MSG_QUEUE_RUN = "开始重跑待重试队列…"
-VERSION_LABEL = "v2.15"
+VERSION_LABEL = "v2.16"
 LBL["ok"] = ("开始作答", "Solve")
 LBL["cancel"] = ("取消", "Cancel")
 LBL["queue"] = ("待重试", "Queue")
@@ -158,3 +158,14 @@ LBL_EXCERPT = "题面"
 LBL_RECALC = "用这段重算"
 LBL_LEDGER = "账本"
 LBL_TRANSLATE = "翻译"
+
+# ---- 趣味文案（v2.16）：待机时的"小问"提示，轮换显示
+QUIP_PREFIX = "小问："
+QUIPS = (
+    "框一下题目，我来算。",
+    "看不清的字符可以改题面再重算。",
+    "选择题我会把选项代回去验一遍。",
+    "英文题我顺手翻成中文。",
+    "算完按 Ctrl+V 就贴进答案框。",
+    "我算完会自己验算一次，别急。",
+)

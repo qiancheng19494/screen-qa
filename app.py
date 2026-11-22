@@ -1208,7 +1208,18 @@ class App:
         controls.pack(fill="x", pady=(2, 9), before=det)
         cpad = tk.Frame(controls, bg=UI["card"])
         cpad.pack(fill="x", padx=10, pady=10)
-        bar = tk.Frame(cpad, bg=UI["card"])
+        # ---- 分组标签：作答 / 工具 / 记录（一页只显示一组，窗口更清爽）
+        tabs = tk.Frame(cpad, bg=UI["card"])
+        tabs.pack(fill="x", pady=(0, 8))
+        self.tab_pills = {}
+        for _name in ("\u4f5c\u7b54", "\u5de5\u5177", "\u8bb0\u5f55"):
+            _p = Pill(tabs, _name, lambda n=_name: self._show_page(n),
+                      kind="flat", width=54, height=24, font_size=9)
+            _p.pack(side="left", padx=(0, 6))
+            self.tab_pills[_name] = _p
+        self.pages = {_n: tk.Frame(cpad, bg=UI["card"])
+                      for _n in ("\u4f5c\u7b54", "\u5de5\u5177", "\u8bb0\u5f55")}
+        bar = tk.Frame(self.pages["\u4f5c\u7b54"], bg=UI["card"])
         bar.pack(fill="x")
         self.b_region = Pill(bar, prompts.L("capture"), self.shot_region, kind="primary",
                              bold=True, width=96)
@@ -1228,8 +1239,8 @@ class App:
         self.b_bad.set_enabled(False)
 
         # 第三行：函数图像 / 朗读 / 迷你浮窗
-        bar3 = tk.Frame(cpad, bg=UI["card"])
-        bar3.pack(fill="x", pady=(8, 0))
+        bar3 = tk.Frame(self.pages["\u5de5\u5177"], bg=UI["card"])
+        bar3.pack(fill="x")
         self.b_plot = Pill(bar3, prompts.L("plot"), self.show_plot, kind="ghost", width=44)
         self.b_plot.pack(side="left")
         self.b_plot.set_enabled(False)
@@ -1253,7 +1264,7 @@ class App:
         self.b_open.pack(side="left", padx=(7, 0))
 
         # 第四行：判卷 / 练一练 / 导出卡片 / 重复上次区域
-        bar4 = tk.Frame(cpad, bg=UI["card"])
+        bar4 = tk.Frame(self.pages["\u5de5\u5177"], bg=UI["card"])
         bar4.pack(fill="x", pady=(8, 0))
         self.b_judge = Pill(bar4, prompts.JUDGE_LABEL, self.judge_answer,
                             kind="ghost", width=64)
@@ -1287,7 +1298,7 @@ class App:
         self.hist_bar = tk.Frame(wrap, bg=bg)
         self.hist_bar.pack(fill="x", before=controls)
 
-        bar2 = tk.Frame(cpad, bg=UI["card"])
+        bar2 = tk.Frame(self.pages["\u4f5c\u7b54"], bg=UI["card"])
         bar2.pack(fill="x", pady=(8, 0))
         self.b_cont = Pill(bar2, prompts.L("cont"), self.toggle_continuous,
                            kind="success", bold=True, width=108)
@@ -1310,6 +1321,20 @@ class App:
         self.b_win = Pill(bar2, prompts.L("win"), self.capture_window_menu, kind="ghost", width=52)
         self.b_win.pack(side="right", padx=(0, 7))
 
+        _rec = self.pages["\u8bb0\u5f55"]
+        _r1 = tk.Frame(_rec, bg=UI["card"])
+        _r1.pack(fill="x")
+        for _txt, _cmd in ((prompts.LBL_LEDGER, self.open_ledger),
+                           (prompts.L("history"), self.open_history),
+                           (prompts.QUEUE_LABEL, self.retry_queue),
+                           ("\u81ea\u68c0", self.selfcheck),
+                           ("\u89c6\u89c9\u81ea\u68c0", self._vision_selftest)):
+            _p = Pill(_r1, _txt, _cmd, kind="ghost", width=64 if len(_txt) > 3 else 52)
+            _p.pack(side="left", padx=(0, 7))
+        tk.Label(_rec, text="\u8bb0\u5f55\u5728 records.jsonl / errors.json / history\uff0c\u4e0d\u4f1a\u4e0a\u4f20",
+                 bg=UI["card"], fg=UI["muted"], font=(FONT, 8)).pack(anchor="w", pady=(8, 0))
+        self._show_page("\u4f5c\u7b54")
+
         # ---- 状态栏
         st = tk.Frame(self.root, bg=UI["card2"])
         st.pack(fill="x", side="bottom", before=wrap)
@@ -1319,6 +1344,19 @@ class App:
         self.st_right = tk.Label(st, text="", bg=UI["card2"], fg=UI["muted"],
                                  font=(FONT, 8), anchor="e")
         self.st_right.pack(side="right", padx=12)
+
+    def _show_page(self, name):
+        """切到某一组按钮（作答 / 工具 / 记录）。"""
+        for n_, f_ in getattr(self, "pages", {}).items():
+            if n_ == name:
+                f_.pack(fill="x")
+            else:
+                f_.pack_forget()
+        for n_, pill_ in getattr(self, "tab_pills", {}).items():
+            try:
+                pill_.set_kind("primary" if n_ == name else "flat")
+            except Exception:  # noqa: BLE001
+                pass
 
     @staticmethod
     def _style_optionmenu(menu_btn, width=12):
@@ -2112,6 +2150,8 @@ class App:
         except Exception:  # noqa: BLE001
             pass
         self._today_count = (getattr(self, "_today_count", 0) or 0) + 1
+        if not hasattr(self, "_today_cost"):
+            self._today_cost = 0.0
         bits = [f"一致 {res.agreement:.0%}",
                 f"{sum(i.calls for i in items)} 次",
                 f"{payload['elapsed']:.1f}s",
@@ -2248,6 +2288,49 @@ class App:
             })
         except Exception:  # noqa: BLE001
             pass
+
+    def selfcheck(self):
+        """一键自检：Key / 余额 / OCR / 视觉后端 / 热键（写进详情框，不花钱）。"""
+        lines = []
+        key = str(self.cfg.get("api_key") or "")
+        lines.append(("\u2705" if key.startswith("sk-") and len(key) > 20 else "\u274c")
+                     + f" API Key\uff1a\u5c3e\u53f7 {key[-4:]}" if key else "\u274c API Key\uff1a\u672a\u586b")
+        try:
+            bal = DeepSeekClient(key, self.cfg.get("base_url", cfg_mod.DEFAULTS["base_url"]),
+                                 self.cfg.get("model", cfg_mod.DEFAULTS["model"])).balance()
+            if bal.get("ok"):
+                lines.append(f"\u2705 \u4f59\u989d\uff1a{bal.get('amount')} {bal.get('currency')}")
+            else:
+                lines.append(f"\u26a0 \u4f59\u989d\u67e5\u8be2\u5931\u8d25\uff1a{bal.get('error')}")
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"\u26a0 \u4f59\u989d\u67e5\u8be2\u5f02\u5e38\uff1a{exc}")
+        try:
+            import psocr
+            ok = psocr.available()
+            lines.append(("\u2705" if ok else "\u274c") + " \u672c\u5730 OCR\uff08Windows.Media.Ocr\uff09")
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"\u274c \u672c\u5730 OCR\uff1a{exc}")
+        try:
+            st = reader.backend_status()
+            mv = st.get("modlens") or {}
+            lines.append(("\u2705 \u89c6\u89c9\uff1a" if mv.get("available") else "\u26a0 \u89c6\u89c9\u4e0d\u53ef\u7528\uff1a")
+                         + str(mv.get("detail") or "")[:60])
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"\u26a0 \u89c6\u89c9\u68c0\u6d4b\u5f02\u5e38\uff1a{exc}")
+        try:
+            bound = ", ".join(f"{k}={v}" for k, v in (self.hk.bound or {}).items())
+            lines.append(f"\u2328 \u70ed\u952e\uff1a{bound or '\u672a\u6ce8\u518c'}")
+        except Exception:  # noqa: BLE001
+            pass
+        st = cfg_mod.daily_stats(self.cfg)
+        lines.append(f"\U0001f4b0 \u4eca\u65e5\uff1a{st.get('count')} \u9898\u00b7\u00a5{float(st.get('cost') or 0):.4f}")
+        text = "\n".join(lines)
+        self._set_detail("\u25ae \u81ea\u68c0\n" + text)
+        try:
+            messagebox.showinfo("\u81ea\u68c0", text[:900])
+        except Exception:  # noqa: BLE001
+            pass
+        return text
 
     def _vision_selftest(self) -> str:
         """跑一次真实的视觉识别，把成功/失败原因原样报给用户。"""
@@ -3253,7 +3336,11 @@ class App:
         self.ans.configure(text="按 Ctrl+Alt+Q 圈住题目", fg=UI["dim"])
         self.chip.configure(text="待命", bg=UI["card2"], fg=UI["muted"])
         self.edge.configure(bg=UI["accent"])
-        self.meta.configure(text="")
+        try:
+            self._quip_i = (getattr(self, "_quip_i", 0) + 1) % len(prompts.QUIPS)
+            self.meta.configure(text=prompts.QUIP_PREFIX + prompts.QUIPS[self._quip_i])
+        except Exception:  # noqa: BLE001
+            self.meta.configure(text="")
         self.b_copy.set_enabled(False)
         self.b_redo.set_enabled(False)
         self.multi_items = []

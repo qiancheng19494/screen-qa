@@ -482,3 +482,14 @@ python tools/regress_offline.py           # 回放：只验判定与验算逻辑
 
 - 交互思路参考了朋友的 [SpellCardHomework / 符卡作业簿](https://github.com/Jerry9335/SpellCardHomework)（MIT）：LaTeX→符号渲染、英文题翻译、"摘录可改→改完重算"的三段式、用量账本、启动横幅。我们按其思路重写实现，未复用其代码与素材。
 - **没有**照搬它的 CDP 全自动网页答题与一机一码授权：前者涉及"代交作业"边界且要引入 websocket 依赖，后者与 MIT 免费发布冲突。
+
+### v2.16：三页分区（作答 / 工具 / 记录）
+
+| 作答页 | 工具页 | 记录页 |
+|---|---|---|
+| ![作答](docs/screenshots/main-answer.png) | ![工具](docs/screenshots/tab-tools.png) | ![记录](docs/screenshots/tab-records.png) |
+
+- 一页只显示一组按钮，窗口高度从 983 降到 **833**，详情区更宽裕；
+- 答案卡底部徽章：`🎯 一击命中`（自适应单次通过）、`✅ 代入验算`、`🤝 双模型一致`、`⚡ 缓存`、`¥0.0025`；
+- 待机时答案卡显示轮换提示（"小问：框一下题目，我来算。"）；
+- 顶栏横幅自绘（`tools/make_banner.py`），右侧显示当前版本。

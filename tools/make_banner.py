@@ -4,7 +4,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "assets" / "banner.png"
-W, H = 490, 52
+W, H = 458, 52
 FONT = r"C:\Windows\Fonts\msyhbd.ttc"
 FONT2 = r"C:\Windows\Fonts\msyh.ttc"
 
@@ -29,7 +29,7 @@ def main() -> int:
     d.text((16, 8), "屏幕问答", font=f1, fill="#eaf1ff")
     d.text((16, 32), "截屏 · 读题 · 作答", font=f2, fill="#7f8ea3")
     d.text((W - 14, 12), "DeepSeek", font=f2, fill="#4d9dff", anchor="ra")
-    d.text((W - 14, 28), "v2.15", font=f2, fill="#3ddc84", anchor="ra")
+    d.text((W - 14, 28), "v2.16", font=f2, fill="#3ddc84", anchor="ra")
     d.line([(0, H - 1), (W, H - 1)], fill="#1d2836")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     img.save(OUT)
