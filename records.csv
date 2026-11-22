@@ -1,0 +1,51 @@
+﻿ts,title,answer,fill,confidence,model,elapsed,calls,backend,cached
+2026-11-21 17:52:08,第9/12题,x = 6,6,高,deepseek-chat,3.9,4,winocr,False
+2026-11-21 17:52:09,第9/12题,x = 6,6,高,deepseek-chat,3.9,4,winocr,False
+2026-11-21 18:46:17,第9/12题,x = 6,6,高,deepseek-chat,0.81,4,winocr,True
+2026-11-21 19:02:57,第9/12题,x = 6,6,高,deepseek-chat,3.99,4,winocr,False
+2026-11-22 14:17:52,题目,x = 6,6,高,deepseek-chat,1.0,1,winocr,False
+2026-11-22 16:51:32,第9/12题,x = 6,6,高,deepseek-chat,3.23,2,winocr,False
+2026-11-22 16:52:06,第9/12题,x = 6,6,高,deepseek-chat,0.71,2,winocr,True
+2026-11-22 17:13:54,第9/12题,x = 6,6,高,deepseek-chat,3.08,2,winocr,False
+2026-11-22 17:14:10,第9/12题,x = 6,6,高,deepseek-chat,0.76,2,winocr,True
+2026-11-22 17:14:32,第9/12题,x = 6,6,高,deepseek-chat,0.68,2,winocr,True
+2026-11-22 17:14:47,第9/12题,x = 6,6,高,deepseek-chat,0.69,2,winocr,True
+2026-11-22 17:40:26,第9/12题,x = 6,6,高,deepseek-chat,0.74,2,winocr,True
+2026-11-22 17:40:44,第9/12题,x = 6,6,高,deepseek-chat,0.68,2,winocr,True
+2026-11-22 17:41:00,第9/12题,x = 6,6,高,deepseek-chat,0.56,2,winocr,True
+2026-11-22 17:41:11,第9/12题,x = 6,6,高,deepseek-chat,0.55,2,winocr,True
+2026-11-22 17:58:30,第9/12题,x = 6,6,高,deepseek-chat,0.72,2,winocr,True
+2026-11-22 17:59:08,第9/12题,x = 6,6,高,deepseek-chat,0.8,2,winocr,True
+2026-11-22 19:56:05,第9/12题,x = 6,6,高,deepseek-chat,0.57,2,winocr,True
+2026-11-22 19:56:24,第9/12题,x = 6,6,高,deepseek-chat,0.56,2,winocr,True
+2026-11-22 19:56:56,第9/12题,x = 6,6,高,deepseek-chat,1.47,2,winocr,True
+2026-11-22 19:57:12,第9/12题,x = 6,6,高,deepseek-chat,2.59,2,winocr,False
+2026-11-22 19:57:40,第9/12题,x = 6,6,高,deepseek-chat,4.1,2,winocr,False
+2026-11-22 19:58:21,第9/12题,x = 6,6,高,deepseek-chat,2.69,2,winocr,False
+2026-11-22 20:20:47,第9/12题,x = 6,6,高,deepseek-chat,2.49,2,winocr,False
+2026-11-22 20:21:11,第9/12题,x = 6,6,高,deepseek-chat,1.07,2,winocr,True
+2026-11-22 20:21:33,第9/12题,x = 6,6,高,deepseek-chat,2.48,2,winocr,False
+2026-11-22 20:57:50,第9/12题,x = 6,6,高,deepseek-chat,2.78,2,winocr,False
+2026-11-22 20:58:24,第9/12题,x = 6,6,高,deepseek-chat,2.72,2,winocr,False
+2026-11-22 20:58:45,第9/12题,x = 6,6,高,deepseek-chat,2.86,2,winocr,False
+2026-11-22 20:59:05,第9/12题,x = 6,6,高,deepseek-chat,3.34,2,winocr,False
+2026-11-22 20:59:58,第9/12题,x = 6,6,高,deepseek-chat,2.47,2,winocr,False
+2026-11-22 21:01:17,第9/12题,x = 6,6,高,deepseek-chat,4.41,2,winocr,False
+2026-11-22 21:10:58,第9/12题,x = 6,6,高,deepseek-chat,2.65,2,winocr,False
+2026-11-22 21:12:28,第9/12题,x = 6,6,高,deepseek-chat,2.63,2,winocr,False
+2026-11-22 21:14:34,第9/12题,x = 6,6,高,deepseek-chat,2.6,2,winocr,False
+2026-11-22 21:15:46,第9/12题,x = 6,6,高,deepseek-chat,2.42,2,winocr,False
+2026-11-22 21:17:01,第9/12题,x = 6,6,高,deepseek-chat,3.1,2,winocr,False
+2026-11-22 21:17:53,第9/12题,x = 6,6,高,deepseek-chat,3.15,2,winocr,False
+2026-11-22 21:18:52,第9/12题,x = 6,6,高,deepseek-chat,2.94,2,winocr,False
+2026-11-22 21:35:32,"Question 3 of 10
+Solve for x.
+9x + 6 = 60",x = 6,6,高,deepseek-chat,1.19,2,剪贴板文字,False
+2026-11-22 21:36:00,"Question 3 of 10
+Solve for x.
+9x + 6 = 60",x = 6,6,高,deepseek-chat,1.28,2,剪贴板文字,False
+2026-11-22 21:39:27,"Question 3 of 10
+Solve for x.
+9x + 6 = 60",x = 6,6,高,deepseek-chat,1.09,2,剪贴板文字,False
+2026-11-22 21:45:08,"Solve for x.
+9x + 6 = 60",x = 6,6,高,deepseek-chat,1.15,2,剪贴板文字,False

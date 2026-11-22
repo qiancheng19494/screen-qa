@@ -561,3 +561,5 @@ Tk 版仍然保留（`python app.py` / `启动.bat`），WebView 出问题随时
 - WebView 版暂不支持窗口不透明度（WebView2 后端的 `opacity` 会抛 `ZoomFactor` 异常，已捕获跳过）
 - 还没打成 exe（Tk 版仍是 exe 分发；WebView 版需要 Python + pywebview）
 - 连续截图、判卷、练一练、账本目前先在 Tk 版用，WebView 版正在补齐
+
+**v2.21.1：WebView 版补齐弹层**（判卷 / 练一练 / 账本 / 历史 / 最近题图 / 函数图像 / 卡片 / CSV / 自检）——都走同一个弹层组件，`Esc` 关闭；账本是 30 天柱状图 + 累计/今日/按模型，历史按时间列出，最近题图两列缩略图。

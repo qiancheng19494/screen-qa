@@ -99,6 +99,36 @@ function renderError(payload) {
   setStatus("失败 · 可点「重算」重试");
 }
 
+
+/* ---------- 通用弹层 ---------- */
+function openModal({ title, html = "", input = "", okText = "", onOk = null }) {
+  $("modalTitle").textContent = title;
+  $("modalBody").innerHTML = html;
+  const inp = $("modalInput");
+  const ok = $("modalOk");
+  inp.hidden = !input;
+  if (input) { inp.value = ""; inp.placeholder = input; setTimeout(() => inp.focus(), 30); }
+  ok.hidden = !onOk;
+  ok.textContent = okText || "确定";
+  ok.onclick = async () => {
+    if (!onOk) { closeModal(); return; }
+    const val = inp.value.trim();
+    ok.disabled = true;
+    try { await onOk(val); } finally { ok.disabled = false; }
+  };
+  inp.onkeydown = (e) => { if (e.key === "Enter" && onOk) ok.click(); };
+  $("modal").hidden = false; $("modalMask").hidden = false;
+}
+function closeModal() { $("modal").hidden = true; $("modalMask").hidden = true; }
+function showText(title, text) { openModal({ title, html: `<pre>${escapeHtml(text)}</pre>` }); }
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+async function withBusy(label, fn) {
+  setBusy(true); setStatus(label);
+  try { return await fn(); } finally { setBusy(false); }
+}
+
 /* ---------- 动作 ---------- */
 async function doShot(mode) {
   setBusy(true); setStatus(mode === "region" ? "圈选题目…" : "整屏识别…");
@@ -243,6 +273,75 @@ function bind() {
     $("drawer").hidden = true; $("mask").hidden = true;
   };
   $("btnSaveCfg").onclick = saveCfg;
+
+  $("btnJudge").onclick = () => {
+    const r = state.items[state.idx];
+    if (!r) { toast("先做一道题"); return; }
+    openModal({
+      title: "判卷：你填的答案是？", input: "例如 6 或 2, 3", okText: "判一下",
+      onOk: async (val) => {
+        closeModal();
+        await withBusy("判卷中…", async () => {
+          const out = await py("judge", val);
+          if (out.ok) showText("判卷结果", out.text);
+          else toast(out.error || "判卷失败");
+        });
+      },
+    });
+  };
+  $("btnPractice").onclick = () => withBusy("生成同类练习…", async () => {
+    const out = await py("practice");
+    if (out.ok) showText("同类练习（3 道）", out.text);
+    else toast(out.error || "生成失败");
+  });
+  $("btnLedger").onclick = () => withBusy("统计中…", async () => {
+    const d = await py("ledger");
+    if (!d.ok) { toast(d.error || "账本读取失败"); return; }
+    const s0 = d.summary || {};
+    const bm = d.by_model || [];
+    const arr = Array.isArray(bm) ? bm : Object.entries(bm).map(([k, v]) => ({ model: k, n: (v && v.n) != null ? v.n : v }));
+    const num = (v) => (v && typeof v === "object" ? (v.n != null ? v.n : Object.values(v)[0]) : v);
+    const rows = arr.map((m) => `<div class="kv"><span>${escapeHtml(m.model || m[0] || "—")}</span><b>${num(m.n)} 题</b></div>`).join("");
+    openModal({
+      title: "账本（近 30 天）",
+      html: `<img src="${d.url}" alt="30 天柱状图">
+        <div class="kv"><span>累计</span><b>${s0.total_n || 0} 题 · ¥${(s0.total_cost || 0).toFixed(4)}</b></div>
+        <div class="kv"><span>今日</span><b>${s0.today_n || 0} 题 · ¥${(s0.today_cost || 0).toFixed(4)}</b></div>
+        ${rows}`,
+    });
+  });
+  $("btnHistory").onclick = () => withBusy("读历史…", async () => {
+    const list = await py("history");
+    if (!list.length) { toast("还没有历史记录"); return; }
+    const html = `<div class="list">${list.map((h) => `<div class="it"><span>${escapeHtml(h.title || h.name)}</span><small>${h.time}</small></div>`).join("")}</div>`;
+    openModal({ title: "历史（最近 40 条）", html });
+  });
+  $("btnRecent").onclick = () => withBusy("读最近题图…", async () => {
+    const list = await py("recent");
+    if (!list.length) { toast("还没有做题截图"); return; }
+    const html = `<div class="grid-img">${list.map((r) => `<img src="${r.url}" title="${r.name}">`).join("")}</div>`;
+    openModal({ title: "最近的题目截图", html });
+  });
+  $("btnPlot").onclick = () => withBusy("画图中…", async () => {
+    const d = await py("plot");
+    if (!d.ok) { toast(d.error || "画不出来"); return; }
+    openModal({ title: "函数图像 · " + (d.exprs || []).join(" / "), html: `<img src="${d.url}">` });
+  });
+  $("btnCard").onclick = () => withBusy("导出卡片…", async () => {
+    const d = await py("export_card");
+    if (d.ok) { toast("卡片已保存"); showText("单题卡片", d.path); }
+    else toast(d.error || "导出失败");
+  });
+  $("btnExport").onclick = () => withBusy("导出 CSV…", async () => {
+    const d = await py("export_csv");
+    if (d.ok) toast(`已导出 ${d.count} 条 → records.csv`);
+    else toast(d.error || "导出失败");
+  });
+  $("btnWarm").onclick = () => withBusy("自检中…", async () => {
+    showText("考前热身 / 自检", await py("warmup"));
+  });
+  $("modalX").onclick = $("modalCancel").onclick = closeModal;
+  $("modalMask").onclick = closeModal;
   $("btnMin").onclick = () => py("win_minimize");
   $("btnClose").onclick = () => py("win_close");
   $("btnPin").onclick = async () => {
@@ -259,7 +358,7 @@ function bind() {
     };
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { $("drawer").hidden = true; $("mask").hidden = true; }
+    if (e.key === "Escape") { $("drawer").hidden = true; $("mask").hidden = true; closeModal(); }
     if (e.ctrlKey && e.key === "Enter") { $("btnRecalc").click(); }
     if (/^[1-9]$/.test(e.key) && state.items.length > 1 && document.activeElement.tagName !== "TEXTAREA") {
       const i = parseInt(e.key, 10) - 1;

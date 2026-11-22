@@ -180,6 +180,21 @@
     </div>
   </aside>
 
+  <!-- 通用弹层：判卷 / 练一练 / 账本 / 历史 / 图像 -->
+  <div class="modal-mask" id="modalMask" hidden></div>
+  <div class="modal" id="modal" hidden>
+    <div class="modal-head">
+      <b id="modalTitle">标题</b>
+      <button class="icon-btn" id="modalX">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot">
+      <input type="text" id="modalInput" placeholder="在这里输入…" hidden>
+      <button class="btn" id="modalCancel">关闭</button>
+      <button class="btn primary" id="modalOk" hidden>确定</button>
+    </div>
+  </div>
+
   <div class="toast" id="toast" hidden></div>
 </div>
 <script src="app.js"></script>

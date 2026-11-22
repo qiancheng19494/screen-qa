@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import ctypes
 import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+except Exception:  # noqa: BLE001
+    pass
 import threading
 import time
 from pathlib import Path
@@ -105,6 +110,42 @@ def main() -> int:
                     api._js_status(f"热键处理失败：{exc}")
 
         threading.Thread(target=loop, daemon=True).start()
+
+        if "--showmodal" in sys.argv:
+            time.sleep(2.0)
+            try:
+                out = api.solve_text("Solve for x.\n9x + 6 = 60")
+                api._js_render(out)
+                time.sleep(1.2)
+                api._js("document.getElementById('btnLedger').click()")
+                print("[showmodal] ledger opened", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print("[showmodal] failed:", exc, flush=True)
+
+        if "--probe" in sys.argv:
+            time.sleep(2.0)
+            try:
+                out = api.solve_text("Solve for x.\n9x + 6 = 60")
+                api._js_render(out)
+                time.sleep(1.5)
+                for js, label in [
+                    ("document.getElementById('btnLedger').click(); 'ok'", "ledger"),
+                    ("document.getElementById('btnHistory').click(); 'ok'", "history"),
+                    ("document.getElementById('btnRecent').click(); 'ok'", "recent"),
+                    ("document.getElementById('btnPlot').click(); 'ok'", "plot"),
+                    ("document.getElementById('btnJudge').click(); 'ok'", "judge"),
+                ]:
+                    api._js(js)
+                    time.sleep(2.2)
+                    title = api.win.evaluate_js("document.getElementById('modalTitle').textContent")
+                    vis = api.win.evaluate_js("!document.getElementById('modal').hidden")
+                    body = api.win.evaluate_js("document.getElementById('modalBody').innerText.slice(0,80)")
+                    inp = api.win.evaluate_js("!document.getElementById('modalInput').hidden")
+                    print(f"[probe] {label}: visible={vis} title={title!r} input={inp} body={body!r}", flush=True)
+                    api._js("closeModal()")
+                    time.sleep(0.4)
+            except Exception as exc:  # noqa: BLE001
+                print("[probe] failed:", exc, flush=True)
 
         if "--selftest" in sys.argv:
             time.sleep(2.5)

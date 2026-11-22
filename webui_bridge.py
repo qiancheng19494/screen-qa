@@ -18,6 +18,7 @@ import capture
 import cloud  # noqa: F401  (保留云端入口，未启用时不影响)
 import config as cfg_mod
 import extras
+import ledger
 import history  # noqa: F401
 import ocrcheck  # noqa: F401
 import plotter
@@ -356,6 +357,148 @@ class Bridge:
                 self._js_render(out)
             except Exception as exc:  # noqa: BLE001
                 self._js_status(f"连续模式出错：{exc}")
+
+
+    # ---------- 判卷 / 练习 / 卡片 / 账本 / 历史 ----------
+    def judge(self, student: str) -> dict:
+        payload = self._last_payload or {}
+        question = payload.get("text") or ""
+        r = payload.get("result")
+        if not question or r is None:
+            return {"ok": False, "error": "先做一道题，再判卷"}
+        student = (student or "").strip()
+        if not student:
+            return {"ok": False, "error": "你还没填答案"}
+        try:
+            cli = A.DeepSeekClient(self.cfg.get("api_key", ""),
+                                   self.cfg.get("base_url", ""),
+                                   self.cfg.get("model", "deepseek-chat"))
+            msgs = [
+                {"role": "system", "content": prompts.JUDGE_SYSTEM},
+                {"role": "user", "content": f"题目：\n{question[:3000]}\n\n参考答案：{r.answer}\n"
+                                            f"（填入应为：{r.fill or r.answer}）\n\n学生答案：{student}"},
+            ]
+            out = cli.chat(msgs, temperature=0.0, max_tokens=900)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": True, "text": (out or "").strip()}
+
+    def practice(self) -> dict:
+        payload = self._last_payload or {}
+        question = payload.get("text") or ""
+        if not question:
+            return {"ok": False, "error": "先做一道题，再生成同类练习"}
+        try:
+            cli = A.DeepSeekClient(self.cfg.get("api_key", ""),
+                                   self.cfg.get("base_url", ""),
+                                   self.cfg.get("model", "deepseek-chat"))
+            msgs = [
+                {"role": "system", "content": prompts.PRACTICE_SYSTEM},
+                {"role": "user", "content": question[:3000]},
+            ]
+            out = cli.chat(msgs, temperature=0.8, max_tokens=1200)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        try:
+            d = ROOT / "\u7ec3\u4e60"
+            d.mkdir(parents=True, exist_ok=True)
+            f = d / (time.strftime("%Y%m%d-%H%M%S") + "-\u7ec3\u4e60.md")
+            f.write_text(out or "", encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "text": (out or "").strip()}
+
+    def export_card(self) -> dict:
+        payload = self._last_payload or {}
+        r = payload.get("result")
+        if r is None:
+            return {"ok": False, "error": "先做一道题"}
+        shot = getattr(self, "_last_image", "") or ""
+        rec = {"title": (payload.get("pretty_q") or payload.get("text") or "")[:200],
+               "answer": r.answer, "fill": r.fill, "confidence": r.confidence,
+               "elapsed": round(_num(r.elapsed), 1), "model": self.cfg.get("model", "")}
+        try:
+            d = ROOT / "cards"
+            d.mkdir(parents=True, exist_ok=True)
+            path = d / (time.strftime("%Y%m%d-%H%M%S") + "-\u5361\u7247.png")
+            extras.export_card(rec, shot, str(path))
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": True, "path": str(path), "url": Path(path).as_uri()}
+
+    def ledger(self) -> dict:
+        try:
+            recs = cfg_mod.load_records(500)
+            info = ledger.summarize(recs)
+            d = ROOT / "_tmp"
+            d.mkdir(parents=True, exist_ok=True)
+            png = d / "ledger-web.png"
+            ledger.draw_chart(recs, days=30, width=560, height=180).save(png)
+            by_model = [{"model": k, "n": v[0] if isinstance(v, (list, tuple)) else v}
+                        for k, v in (info.get("by_model") or {}).items()]
+            return {"ok": True, "summary": {k: info[k] for k in
+                                            ("total_n", "total_cost", "today_n", "today_cost")
+                                            if k in info},
+                    "by_model": by_model, "url": png.as_uri(), "count": len(recs)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    def history(self) -> list:
+        out = []
+        try:
+            base = cfg_mod.history_dir()
+            files = sorted(base.glob("*.md"), reverse=True)[:40]
+            for f in files:
+                title = ""
+                try:
+                    with open(f, encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip("# \n")
+                            if line:
+                                title = line[:80]
+                                break
+                except Exception:  # noqa: BLE001
+                    pass
+                out.append({"name": f.name, "title": title,
+                            "time": time.strftime("%m-%d %H:%M",
+                                                  time.localtime(f.stat().st_mtime))})
+        except Exception:  # noqa: BLE001
+            pass
+        return out
+
+    def export_csv(self) -> dict:
+        try:
+            p = ROOT / "records.csv"
+            n = cfg_mod.export_records_csv(p)
+            return {"ok": True, "count": n, "path": str(p)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    def recent(self) -> list:
+        try:
+            base = ROOT / "shots"
+            files = sorted(base.glob("*.png"), key=lambda f: f.stat().st_mtime, reverse=True)[:8]
+            return [{"name": f.name, "url": f.as_uri()} for f in files]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def plot(self) -> dict:
+        payload = self._last_payload or {}
+        q = payload.get("text") or (payload.get("pretty_q") or "")
+        try:
+            exprs = plotter.extract_functions(q)
+            if not exprs:
+                return {"ok": False, "error": "题目里没找到可画的函数（形如 f(x)=… 或 y=…）"}
+            d = ROOT / "_tmp"
+            d.mkdir(parents=True, exist_ok=True)
+            png = d / "plot-web.png"
+            (plotter.plot_multi(exprs) if len(exprs) > 1 else plotter.plot_function(exprs[0])).save(png)
+            return {"ok": True, "url": png.as_uri(), "exprs": exprs}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    def warmup(self) -> str:
+        return self.selfcheck() + "\n\n（WebView 版热身：环境自检已完成；要跑实题请用 Tk 版「考前热身」）"
 
     # ---------- 前端事件 ----------
     def _js(self, code: str) -> None:
