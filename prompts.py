@@ -56,3 +56,10 @@ def set_lang(value):
 def L(key):
     zh, en = LBL.get(key, (key, key))
     return en if _LANG["v"] == "en" else zh
+
+# ---- OCR 不可靠时自动改用剪贴板文字（v2.8）
+MSG_CLIP_TAKEN = "OCR 不可靠（{why}）→ 已改用剪贴板里的文字作答（{n} 字）"
+MSG_CLIP_MISSING = "OCR 不可靠（{why}），但剪贴板里没有题目文字；先 Ctrl+C 复制题干再重试"
+MSG_CLIP_BACKEND = "剪贴板文字（替代 OCR）"
+MSG_CLIP_NOTE = "OCR 可能不可靠（{why}），已改用剪贴板里的文字作答"
+LBL_CLIP_FALLBACK = "OCR 不可靠时用剪贴板文字"

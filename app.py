@@ -329,6 +329,17 @@ def _fast_downgrade(items, cfg):
             it.confidence = "中"
 
 
+class _ReadShim:
+    """把一段已知文字伪装成"识别结果"，让后面的流程完全复用。"""
+
+    def __init__(self, text, backend="剪贴板文字", note=""):
+        self.text = text
+        self.backend = backend
+        self.warnings = [note or "直接用了剪贴板里的文字，没有截图（更快更准）"]
+        self.elapsed = 0.0
+        self.error = ""
+
+
 def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> dict:
     t0 = time.time()
 
@@ -338,13 +349,6 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
         reader_order = ["modlens", "winocr"]
         emit("log", "几何图模式：先用视觉模型读整图…")
     if raw_text is not None:
-        class _ReadShim:
-            def __init__(self, text):
-                self.text = text
-                self.backend = "剪贴板文字"
-                self.warnings = ["直接用了剪贴板里的文字，没有截图（更快更准）"]
-                self.elapsed = 0.0
-                self.error = ""
         rr = _ReadShim(raw_text)
         emit("log", f"纯文字模式：{len(rr.text)} 字（跳过 OCR）")
     else:
@@ -365,6 +369,31 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
         return {"ok": False, "stage": "read", "elapsed": time.time() - t0,
                 "error": (f"只识别到 {len(rr.text.strip())} 个字，基本等于没框到题目。"
                           f"\n把题目（含题干和选项）框大一点，或按 {full_key} 整屏。")}
+    if cfg.get("clip_fallback", True):
+        try:
+            import ocrcheck as _oc
+            why = _oc.risk(rr.text)
+            if why:
+                clip = (capture.clipboard_text() or "").strip()
+                same_q = False
+                if len(clip) >= 20 and re.search(r"[0-9=]", clip):
+                    try:
+                        import verify as _vf
+                        nums_ocr = _vf.extract_numbers(rr.text)
+                        nums_clip = _vf.extract_numbers(clip)
+                        same_q = any(abs(x - y) < 1e-9 for x in nums_ocr for y in nums_clip)
+                    except Exception:  # noqa: BLE001
+                        same_q = False
+                if same_q:
+                    rr = _ReadShim(
+                        clip,
+                        backend=prompts.MSG_CLIP_BACKEND,
+                        note=prompts.MSG_CLIP_NOTE.format(why=why))
+                    emit("log", prompts.MSG_CLIP_TAKEN.format(why=why, n=len(clip)))
+                else:
+                    emit("log", prompts.MSG_CLIP_MISSING.format(why=why))
+        except Exception:  # noqa: BLE001
+            pass
     emit("log", f"识别完成（{rr.backend}，{len(rr.text)} 字，{rr.elapsed:.1f}s）")
 
     key = _cache_key(rr.text, cfg)
@@ -2539,6 +2568,7 @@ class App:
         tts_var = tk.BooleanVar(value=bool(self.cfg.get("tts", False)))
         mini_var = tk.BooleanVar(value=bool(self.cfg.get("mini", False)))
         plot_var = tk.BooleanVar(value=bool(self.cfg.get("plot", True)))
+        clipfb_var = tk.BooleanVar(value=bool(self.cfg.get("clip_fallback", True)))
         checks2 = tk.Frame(frm, bg=bg)
         checks2.grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 8))
         for i, (text, var) in enumerate((("答完自动粘贴", paste_var),
@@ -2552,7 +2582,8 @@ class App:
                                         ("剪贴板自动作答", watch_var),
                                         ("答完自动朗读", tts_var),
                                         ("迷你答案条", mini_var),
-                                        ("函数图像按钮", plot_var))):
+                                        ("函数图像按钮", plot_var),
+                                        (prompts.LBL_CLIP_FALLBACK, clipfb_var))):
             tk.Checkbutton(checks2, text=text, variable=var, bg=bg, fg=UI["dim"],
                            selectcolor=card, activebackground=bg,
                            activeforeground=UI["text"], bd=0, highlightthickness=0,
@@ -2821,6 +2852,7 @@ class App:
             self.cfg["tts"] = bool(tts_var.get())
             self.cfg["mini"] = bool(mini_var.get())
             self.cfg["plot"] = bool(plot_var.get())
+            self.cfg["clip_fallback"] = bool(clipfb_var.get())
             self.cfg["exam_date"] = (exam_var.get() or "").strip()
             self.cfg["lang"] = "en" if lang_var.get().startswith("English") else "zh"
             self.cfg["follow_accent"] = bool(accent_var.get())

@@ -10,7 +10,9 @@ import re
 
 import verify
 
-__all__ = ["audit"]
+__all__ = ["audit", "risk"]
+
+_EMPTY_PAREN = re.compile(r"\(\s*\)")
 
 _EQ_SUPERSCRIPT = re.compile(r"\d[xX]\d(?!\d)|[xX]\s?2(?!\d)|[xX]\s?3(?!\d)")
 
@@ -49,3 +51,17 @@ def audit(question: str, answer: str, fill: str = "", reasoning: str = "") -> li
     except Exception:  # noqa: BLE001
         pass
     return warns
+
+def risk(question: str) -> str:
+    """返回 OCR 不可靠的具体原因；可靠则返回空串（供自动改用剪贴板文字）。"""
+    q = question or ""
+    try:
+        if _EMPTY_PAREN.search(q) or re.search(r"sqrt\s*\(\s*\)|\(\s*\)", q, re.I):
+            return "读到了空括号（系数可能被吞）"
+        if len(q) >= 20 and not re.search(r"[0-9=^/<>]", q):
+            return "题面里没有数字/符号（可能有整行被丢）"
+        if re.search(r"\bsqrt\b", q, re.I) and not re.search(r"sqrt\s*\(\s*[0-9x]", q, re.I):
+            return "根号内容不完整"
+    except Exception:  # noqa: BLE001
+        return ""
+    return ""

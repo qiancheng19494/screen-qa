@@ -29,7 +29,9 @@ _TRANS = {
     "√": "sqrt", "π": "pi", "∞": "inf",
 }
 
-_ALLOWED = re.compile(r"^[0-9xX+\-*/^().,\s]*$")
+_ALLOWED = re.compile(r"^[0-9a-zA-Z+\-*/^().,\s]*$")
+_FUNC_TOK = re.compile(r"[a-zA-Z]+")
+_FUNC_OK = {"x", "sin", "cos", "tan", "log", "ln", "exp", "abs", "sqrt", "pi"}
 _FUNC_DEF = re.compile(r"(?:^|\s)([fghFGH])\s*\(\s*([a-zA-Z])\s*\)\s*=\s*([^;。\n]{1,80})", re.S)
 _F_OF_NUM = re.compile(r"\b(?:f|g|h)\s*\(\s*(-?\d+(?:\.\d+)?)\s*\)", re.S)
 _EQ_LINE = re.compile(r"[^=\n]{1,80}=[^=\n]{1,80}")
@@ -72,8 +74,33 @@ def _clean_expr(s):
         return None
     if not _ALLOWED.match(s):
         return None
+    # 字母只能是变量 x 或白名单函数名（sqrt/sin/log…），防止把英文单词当表达式
+    for tok in _FUNC_TOK.findall(s):
+        if tok.lower() not in _FUNC_OK:
+            return None
     return s
 
+
+_CLAUSE_SPLIT = re.compile(r"\.\s+|:\s+")
+
+
+def _drop_clause(s):
+    """去掉题干里的指令性前缀：'Solve for x. 9x + 6' -> '9x + 6'。"""
+    parts = [x for x in _CLAUSE_SPLIT.split(s or "") if x.strip()]
+    if len(parts) <= 1:
+        return s or ""
+    for cand in reversed(parts):
+        if re.search(r"[0-9](?:\s*[xX]|\b)|sqrt|\d\s*[/*+-]", cand, re.I):
+            return cand
+    return parts[-1]
+
+
+def _expr_side(s, last):
+    """先按"句子/冒号"切掉指令前缀，再清洗；失败时退回旧的正则截取。"""
+    t = _clean_expr(_strip_words(_drop_clause(s)))
+    if t:
+        return t
+    return _clean_expr(_strip_words(_math_side(s, last)))
 
 _WORD_OK = {"sin", "cos", "tan", "log", "ln", "exp", "abs", "sqrt", "pi", "x"}
 
@@ -116,8 +143,8 @@ def _equation_pairs(text):
         if chunk.count("=") != 1:
             continue
         left, right = chunk.split("=", 1)
-        lx = _clean_expr(_strip_words(_math_side(left, True)))
-        rx = _clean_expr(_strip_words(_math_side(right, False)))
+        lx = _expr_side(left, True)
+        rx = _expr_side(right, False)
         if not lx or not rx:
             continue
         if VAR not in lx.lower() and VAR not in rx.lower():

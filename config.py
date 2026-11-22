@@ -70,6 +70,7 @@ DEFAULTS = {
     "hotkey_text": "ctrl+alt+t",
     "hotkey_mini": "ctrl+alt+m",
     "watch_clip": False,
+    "clip_fallback": True,
     "watch_titles": "",
     "tts": False,
     "tts_lang": "zh",
@@ -98,7 +99,7 @@ def load() -> dict:
                "dedupe", "cache", "multi", "fast", "reasoner", "refocus",
                "auto_paste", "auto_enter", "dual", "vision_first",
                "remember_pos", "check_update", "tray", "autostart",
-               "watch_clip", "tts", "mini", "plot"):
+               "watch_clip", "tts", "mini", "plot", "clip_fallback"):
         if _k in cfg:
             cfg[_k] = bool(cfg.get(_k, DEFAULTS[_k]))
     # 环境变量优先
