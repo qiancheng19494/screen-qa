@@ -49,6 +49,7 @@ def is_coding(text: str) -> bool:
     low = text.lower()
     hits = sum(1 for kw in _PY_HINTS if kw in low)
     code_lines = len(_CODE_LINE.findall(text))
+    import re as _re  # noqa: F401
     # 明显代码特征：缩进行 ≥2，或异常名 + 任一线索
     if code_lines >= 2:
         return True

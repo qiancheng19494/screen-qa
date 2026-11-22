@@ -276,14 +276,19 @@ class Solver:
         import time
 
         t0 = time.time()
-        _coding = codingq.is_coding(question_text)
+        _txt = question_text or ""
+        _calls = _txt.lower().count("print(") + _txt.lower().count("input(")
+        _assigns = len(re.findall(r"(?m)^\\s*[A-Za-z_]\\w*\\s*=\\s*[^=]", _txt))
+        _coding = (codingq.is_coding(_txt)
+                   or _calls >= 2 or _assigns >= 2
+                   or (_calls >= 1 and _assigns >= 1))
         res = SolveResult(question_text=question_text)
         # 代码题：走"整段体检"（一次找全 + compile 迭代），比单问单答更贴近作业场景
         if _coding and getattr(self, "code_sweep", True) and len(question_text.strip().splitlines()) >= 3:
             try:
                 import codefix
                 t_sweep = time.time()
-                sw = codefix.sweep(question_text, self.client, self.model or "")
+                sw = codefix.sweep(question_text, self.client, getattr(self, "model", "") or "")
                 issues = sw.get("issues") or []
                 code = sw.get("code") or ""
                 res.samples = [code[:2000]] if code else []
@@ -295,7 +300,7 @@ class Solver:
                 res.check_note = ("修正后的代码语法检查通过" if sw.get("ok")
                                   else (sw.get("note") or "未能给出可编译的代码"))
                 res.answer = (code.splitlines()[0] if code else "见下方错误清单")
-                res.fill = "见上方代码" if code else ""
+                res.fill = code if code else ""
                 res.calls = int(sw.get("rounds") or 1)
                 parts = []
                 if issues:

@@ -44,6 +44,7 @@ def _pick_issues(text: str) -> list[str]:
 
 
 def sweep(student_code: str, client, model: str = "", rounds: int = 2) -> dict:
+    mdl = model or getattr(client, "model", "") or "deepseek-chat"
     """返回 {issues, code, ok, rounds, note, raw}；不抛异常。"""
     from codingq import check_syntax
     model = model or ""
@@ -61,7 +62,7 @@ def sweep(student_code: str, client, model: str = "", rounds: int = 2) -> dict:
             reply = client.chat(
                 [{"role": "system", "content": SWEEP_SYSTEM},
                  {"role": "user", "content": user}],
-                temperature=0.0, max_tokens=1600, model=model or None)
+                temperature=0.0, max_tokens=1600, model=mdl or None)
         except Exception as exc:  # noqa: BLE001
             return {"issues": issues, "code": code, "ok": False,
                     "rounds": used, "note": f"调用失败：{exc}", "raw": ""}
