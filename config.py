@@ -71,6 +71,11 @@ DEFAULTS = {
     "hotkey_mini": "ctrl+alt+m",
     "watch_clip": False,
     "clip_fallback": True,
+    "adaptive": True,        # 自适应采样：单次作答 + 验算通过就不再问
+    "stream": True,          # 流式输出（等待感更轻）
+    "fuzzy_cache": True,     # 模糊缓存：题面差几个字也能命中
+    "cross_check": True,     # 双读交叉校验（OCR vs 视觉模型）
+    "compact": False,        # 紧凑模式（小屏）
     "watch_titles": "",
     "tts": False,
     "tts_lang": "zh",
@@ -99,7 +104,8 @@ def load() -> dict:
                "dedupe", "cache", "multi", "fast", "reasoner", "refocus",
                "auto_paste", "auto_enter", "dual", "vision_first",
                "remember_pos", "check_update", "tray", "autostart",
-               "watch_clip", "tts", "mini", "plot", "clip_fallback"):
+               "watch_clip", "tts", "mini", "plot", "clip_fallback",
+        "adaptive", "stream", "fuzzy_cache", "cross_check", "compact"):
         if _k in cfg:
             cfg[_k] = bool(cfg.get(_k, DEFAULTS[_k]))
     # 环境变量优先

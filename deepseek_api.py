@@ -42,6 +42,7 @@ class DeepSeekClient:
         max_tokens: int = 2048,
         model: str | None = None,
         retries: int = 3,
+        stream_cb=None,
     ) -> str:
         if not self.api_key:
             raise ApiError(
@@ -56,6 +57,9 @@ class DeepSeekClient:
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if stream_cb is not None:
+            # 流式：边生成边把增量文本交给界面（总耗时不变，等待感明显变轻）
+            payload["stream"] = True
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         url = f"{self.base_url}/chat/completions"
 
@@ -72,6 +76,39 @@ class DeepSeekClient:
             )
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    if stream_cb is not None:
+                        chunks: list[str] = []
+                        usage: dict = {}
+                        for raw in resp:
+                            line = raw.decode("utf-8", "ignore").strip()
+                            if not line.startswith("data:"):
+                                continue
+                            piece = line[5:].strip()
+                            if piece == "[DONE]":
+                                break
+                            try:
+                                obj = json.loads(piece)
+                            except Exception:  # noqa: BLE001
+                                continue
+                            if obj.get("usage"):
+                                usage = obj["usage"]
+                            for ch in obj.get("choices") or []:
+                                delta = (ch.get("delta") or {}).get("content")
+                                if delta:
+                                    chunks.append(delta)
+                                    try:
+                                        stream_cb(delta)
+                                    except Exception:  # noqa: BLE001
+                                        pass
+                        text = "".join(chunks)
+                        used = usage or {}
+                        self.last_usage = {
+                            "prompt": int(used.get("prompt_tokens") or 0),
+                            "completion": int(used.get("completion_tokens") or 0),
+                        }
+                        self.usage_total["prompt"] += self.last_usage["prompt"]
+                        self.usage_total["completion"] += self.last_usage["completion"]
+                        return text
                     body = json.loads(resp.read().decode("utf-8"))
                 used = body.get("usage") or {}
                 self.last_usage = {

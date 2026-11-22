@@ -276,6 +276,44 @@ def _cache_key(text: str, cfg: dict) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
+def _fuzzy_sig(text: str) -> str:
+    """模糊签名：题号 + 题面里出现过的数字（排序去重）。
+
+    OCR 抖动多半只影响空格/形近字，数字和题号几乎总是稳定的；
+    用这两样当"同一道题"的判据，比整段文本做 sha1 稳得多。
+    """
+    norm = _normalize(text)
+    nums = sorted({f"{n:.6g}" for n in qsplit.numbers_in(text)})
+    qno = qsplit.question_number(text) or (0, 0)
+    raw = f"{qno[0]}/{qno[1]}|" + ",".join(nums) + "|" + str(len(norm) // 20)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _similar(a: str, b: str) -> float:
+    try:
+        return difflib.SequenceMatcher(None, a, b).ratio()
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def find_fuzzy(hit_cache: dict, text: str, cfg: dict):
+    """精确 key 没命中时，再按 题号+数字 找回"同一道题"。"""
+    sig = _fuzzy_sig(text)
+    norm = _normalize(text)
+    best = None
+    best_ratio = 0.0
+    for key, entry in (hit_cache or {}).items():
+        if not isinstance(entry, dict) or not entry.get("items"):
+            continue
+        if entry.get("sig") != sig:
+            continue
+        ratio = _similar(norm, entry.get("norm") or "")
+        if ratio >= 0.93 and ratio > best_ratio:
+            best = (key, entry)
+            best_ratio = ratio
+    return best
+
+
 def load_cache() -> dict:
     try:
         raw = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
@@ -359,6 +397,7 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
             modlens_timeout=int(cfg.get("modlens_timeout", 300)),
             log=lambda m: emit("log", m),
             ocr_quality=str(cfg.get("ocr_quality", "high")),
+            cross_check=bool(cfg.get("cross_check", True)),
         )
 
     if not rr.text:
@@ -400,16 +439,25 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
 
     # ---- 缓存命中：同一道题做过就直接秒出，不再花钱调模型
     if cfg.get("cache", True):
-        hit = load_cache().get(key)
+        all_cache = load_cache()
+        hit = all_cache.get(key)
+        fuzzy_note = ""
+        if not (hit and hit.get("items")) and cfg.get("fuzzy_cache", True):
+            found = find_fuzzy(all_cache, rr.text, cfg)
+            if found:
+                key, hit = found
+                fuzzy_note = "（题面略有差异，按题号+数字匹配上的）"
         if hit and hit.get("items"):
             items = [_dict_to_res(d) for d in hit["items"]]
             _fast_downgrade(items, cfg)
-            emit("log", f"⚡ 命中缓存（省下 {sum(i.calls for i in items)} 次模型调用）")
+            emit("log", f"⚡ 命中缓存{fuzzy_note}"
+                        f"（省下 {sum(i.calls for i in items)} 次模型调用）")
             return {
                 "ok": True, "text": rr.text, "backend": rr.backend,
                 "read_elapsed": rr.elapsed, "result": items[0], "items": items,
                 "elapsed": time.time() - t0, "warnings": rr.warnings,
                 "cached": True, "cached_at": hit.get("ts", 0), "key": key,
+                "fuzzy": bool(fuzzy_note),
             }
 
     # ---- 错题本：同一道题上次被你标记为"答错了" → 这次多问两路
@@ -431,6 +479,13 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
     # 低置信度时换 deepseek-reasoner 复核：极速模式或已经用 R1 当主模型时跳过
     use_r1 = (bool(cfg.get("reasoner", True)) and not cfg.get("fast")
               and cfg.get("model") != "deepseek-reasoner")
+    def _stream_cb(delta: str):
+        """流式增量：只往界面发，不改任何状态（失败也不该影响作答）。"""
+        try:
+            emit("stream", delta)
+        except Exception:  # noqa: BLE001
+            pass
+
     solver = Solver(
         client,
         samples=samples_n,
@@ -440,6 +495,8 @@ def run_pipeline(image_path, cfg: dict, emit, raw_text: str | None = None) -> di
         escalate=bool(cfg.get("escalate", True)),
         reasoner="deepseek-reasoner" if use_r1 else "",
         dual=bool(cfg.get("dual")) and use_r1 and not cfg.get("fast"),
+        adaptive=bool(cfg.get("adaptive", True)) and not cfg.get("fast"),
+        stream_cb=_stream_cb if cfg.get("stream", True) else None,
     )
 
     # ---- 一屏多题：切成一题一题，分别走同一套采样+投票+审核
@@ -836,6 +893,8 @@ class App:
         self.root.after(160, lambda: snap_bottom_right(self.root))
         self.root.after(700, lambda: snap_bottom_right(self.root))
         # 被最小化 / Win+D 之后再恢复时，重新贴回右下角
+        for i in range(1, 10):
+            self.root.bind(f"<Key-{i}>", lambda _e, n=i - 1: self._hot_copy(n))
         self.root.bind("<Map>", self._on_map)
         self.root.after(1200, self._setup_tray)
         self.root.after(3000, self._watch)
@@ -873,7 +932,8 @@ class App:
             self.font_scale = max(80, min(160, int(self.cfg.get("font_scale", 100)))) / 100.0
         except Exception:  # noqa: BLE001
             self.font_scale = 1.0
-        place_bottom_right(root, 474, 742)
+        compact = bool(self.cfg.get("compact"))
+        place_bottom_right(root, 474, 655 if compact else 742)
         pos = str(self.cfg.get("last_pos") or "")
         if self.cfg.get("remember_pos") and re.match(r"^\d+x\d+[+-]\d+[+-]\d+$", pos):
             try:
@@ -1010,7 +1070,8 @@ class App:
         det.pack(fill="both", expand=True)
         self.text = tk.Text(det, wrap="word", bg=UI["card2"], fg=UI["text"],
                             insertbackground=UI["text"], relief="flat", bd=0,
-                            highlightthickness=0, cursor="arrow", height=8,
+                            highlightthickness=0, cursor="arrow",
+                            height=5 if self.cfg.get("compact") else 8,
                             font=(FONT, max(8, round(int(self.cfg.get("font_size", 11))
                                                      * self.font_scale))),
                             padx=14, pady=12, spacing1=2, spacing3=3)
@@ -1312,6 +1373,7 @@ class App:
         return
 
     def _run_path(self, path, bypass=False):
+        self._reset_stream()
         if self.busy:
             return
         self.last_image_path = str(path)
@@ -1352,6 +1414,12 @@ class App:
             cfg["samples"] = 1        # 极速：只问一次
             cfg["verify"] = False     # 不做交叉审核
             cfg["escalate"] = False   # 不追加采样
+        elif getattr(self, "_slow_hint", False):
+            # 上一次超时了：这一题先用单次采样 + 自适应验算，别再等三路
+            cfg["samples"] = 1
+            cfg["escalate"] = False
+            self._slow_hint = False
+            self.log("上次作答超时 → 这次先用单次采样（自适应验算兜底）")
         return cfg
 
     def _set_buttons(self, enabled: bool):
@@ -1575,6 +1643,26 @@ class App:
         tick()
 
     # ------------------------------------------------------------ 事件循环
+    def _reset_stream(self):
+        self._stream_buf = ""
+        self._stream_pending = 0
+
+    def _on_stream(self, delta: str):
+        """流式增量：先屯在缓冲里，每 ~120 字刷一次详情框，避免频繁重排。"""
+        if not delta:
+            return
+        self._stream_buf = (getattr(self, "_stream_buf", "") + delta)[-4000:]
+        self._stream_pending = getattr(self, "_stream_pending", 0) + len(delta)
+        if self._stream_pending < 120 and "## 最终答案" not in self._stream_buf:
+            return
+        self._stream_pending = 0
+        try:
+            self.text.delete("1.0", "end")
+            self.text.insert("end", "实时生成中…\n")
+            self.text.insert("end", self._stream_buf[-1500:])
+        except Exception:  # noqa: BLE001
+            pass
+
     def _poll(self):
         try:
             while True:
@@ -1596,6 +1684,10 @@ class App:
                     self._show_warmup(str(payload))
                 elif kind == "update":
                     self._on_update_info(payload)
+                elif kind == "followup":
+                    self._show_followup(str(payload))
+                elif kind == "stream":
+                    self._on_stream(str(payload))
         except queue.Empty:
             pass
 
@@ -1613,8 +1705,6 @@ class App:
                         self.paste_image()
                     elif name == "next":
                         self.next_answer()
-                    elif name == "followup":
-                        self._show_followup(payload)
                     elif name == "follow":
                         self.ask_followup()
                     elif name == "text":
@@ -2071,6 +2161,17 @@ class App:
         except Exception:  # noqa: BLE001
             pass
 
+    def _hot_copy(self, idx: int):
+        """数字键 1-9：复制第 N 题的答案（多题时很省事）。"""
+        items = getattr(self, "multi_items", None) or []
+        if not items:
+            return
+        if idx >= len(items):
+            self.set_status(f"只有 {len(items)} 题 · 按 1-{min(9, len(items))}")
+            return
+        self.multi_idx = idx
+        self._copy_index(idx, items[idx].fill or items[idx].answer)
+
     def _render_multi(self, items):
         """一屏多题时，给每题一个「复制」按钮（最多 8 题）+ 一个「下一题」。"""
         try:
@@ -2216,6 +2317,27 @@ class App:
 
     # ------------------------------------------------------------ 历史 / 更新
     # ------------------------------------------------------------ 最近图
+    def install_update(self):
+        """把 _update 里的内容覆盖到程序目录（保留 config.json / history / cache）。"""
+        upd = ROOT / "_update"
+        if not upd.exists():
+            messagebox.showinfo("安装更新", "还没有下载过更新，先点「下载更新」。")
+            return
+        if not messagebox.askyesno(
+                "安装更新",
+                f"会用 {upd} 里的文件覆盖当前程序（config.json、history、缓存都保留）。\n"
+                "覆盖后需要重开程序。继续？"):
+            return
+        try:
+            info = extras.apply_update(keep=("config.json", "history", "_tmp", "_app.log"))
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("安装更新", f"失败：{exc}")
+            return
+        self.log(f"已覆盖 {info.get('copied', 0)} 个文件"
+                 + (f"，跳过 {info.get('skipped', 0)} 个" if info.get("skipped") else ""))
+        messagebox.showinfo("安装更新",
+                            f"已更新 {info.get('copied', 0)} 个文件。\n重开程序即可用新版本。")
+
     def download_update(self):
         """Download latest source from GitHub into <app dir>/_update (no auto-replace)."""
         if not messagebox.askyesno(
@@ -2382,6 +2504,7 @@ class App:
                 limit = float(self.cfg.get("timeout_s", 120) or 120)
                 if waited > limit and not self._slow_warned:
                     self._slow_warned = True
+                    self._slow_hint = True   # 下一题自动降级成单次采样
                     self.log(prompts.MSG_SLOW.format(sec=waited))
                     self.set_status(prompts.MSG_SLOW.format(sec=waited))
         except Exception:  # noqa: BLE001
@@ -2629,7 +2752,7 @@ class App:
         frm = tk.Frame(win, bg=bg)
         frm.pack(fill="both", expand=True, padx=18, pady=16)
         win.update_idletasks()
-        w, h = 700, 760
+        w, h = 720, 820
         px = self.root.winfo_rootx() + self.root.winfo_width() - w
         py = self.root.winfo_rooty() + self.root.winfo_height() - h
         win.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
@@ -2714,6 +2837,12 @@ class App:
         mini_var = tk.BooleanVar(value=bool(self.cfg.get("mini", False)))
         plot_var = tk.BooleanVar(value=bool(self.cfg.get("plot", True)))
         clipfb_var = tk.BooleanVar(value=bool(self.cfg.get("clip_fallback", True)))
+        # v2.10：性能/读取策略开关
+        adaptive_var = tk.BooleanVar(value=bool(self.cfg.get("adaptive", True)))
+        stream_var = tk.BooleanVar(value=bool(self.cfg.get("stream", True)))
+        fuzzy_var = tk.BooleanVar(value=bool(self.cfg.get("fuzzy_cache", True)))
+        cross_var = tk.BooleanVar(value=bool(self.cfg.get("cross_check", True)))
+        compact_var = tk.BooleanVar(value=bool(self.cfg.get("compact", False)))
         checks2 = tk.Frame(frm, bg=bg)
         checks2.grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 8))
         for i, (text, var) in enumerate((("答完自动粘贴", paste_var),
@@ -2728,7 +2857,12 @@ class App:
                                         ("答完自动朗读", tts_var),
                                         ("迷你答案条", mini_var),
                                         ("函数图像按钮", plot_var),
-                                        (prompts.LBL_CLIP_FALLBACK, clipfb_var))):
+                                        (prompts.LBL_CLIP_FALLBACK, clipfb_var),
+                                        ("自适应采样", adaptive_var),
+                                        ("流式输出", stream_var),
+                                        ("模糊缓存", fuzzy_var),
+                                        ("双读校验", cross_var),
+                                        ("紧凑模式", compact_var))):
             tk.Checkbutton(checks2, text=text, variable=var, bg=bg, fg=UI["dim"],
                            selectcolor=card, activebackground=bg,
                            activeforeground=UI["text"], bd=0, highlightthickness=0,
@@ -2938,6 +3072,8 @@ class App:
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, "下载更新", self.download_update, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row7, "安装更新", self.install_update, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, "导出卡片", self.export_cards, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, "余额", lambda: self.check_balance(silent=False), kind="flat",
@@ -3000,6 +3136,11 @@ class App:
             self.cfg["mini"] = bool(mini_var.get())
             self.cfg["plot"] = bool(plot_var.get())
             self.cfg["clip_fallback"] = bool(clipfb_var.get())
+            self.cfg["adaptive"] = bool(adaptive_var.get())
+            self.cfg["stream"] = bool(stream_var.get())
+            self.cfg["fuzzy_cache"] = bool(fuzzy_var.get())
+            self.cfg["cross_check"] = bool(cross_var.get())
+            self.cfg["compact"] = bool(compact_var.get())
             self.cfg["exam_date"] = (exam_var.get() or "").strip()
             self.cfg["lang"] = "en" if lang_var.get().startswith("English") else "zh"
             self.cfg["follow_accent"] = bool(accent_var.get())
@@ -3050,6 +3191,7 @@ class App:
         self._start_text(text)
 
     def _start_text(self, text: str):
+        self._reset_stream()
         self.last_job = ("text", text)
         self._failed = False
         self.busy = True

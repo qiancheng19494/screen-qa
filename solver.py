@@ -152,6 +152,7 @@ class SolveResult:
     dual_note: str = ""            # 互检结论（一致 / 不一致改判 …）
     tokens_in: int = 0             # 本次求解消耗的 prompt tokens
     tokens_out: int = 0            # 本次求解消耗的 completion tokens
+    adaptive: bool = False         # 自适应采样：单次作答 + 验算通过，省下其余样本
     check: str = ""                # 本地验算：ok / fail / skip
     check_note: str = ""           # 验算说明（"把 x=6 代回去两边相等"）
     error: str = ""
@@ -170,6 +171,8 @@ class Solver:
         escalate_extra: int = 2,
         reasoner: str = "",
         dual: bool = False,
+        adaptive: bool = False,
+        stream_cb=None,
     ):
         self.client = client
         self.samples = max(1, int(samples))
@@ -181,6 +184,10 @@ class Solver:
         self.escalate_extra = max(1, int(escalate_extra))
         # 低置信度时用更强推理模型复核一次（空字符串 = 不复核）
         self.reasoner = (reasoner or "").strip()
+        # 自适应采样：先问 1 次，能通过本地验算就不再问（简单题快一倍、便宜一半）
+        self.adaptive = bool(adaptive)
+        # 流式回调：第一份样本边生成边把文字交给界面（体感更快，总耗时不变）
+        self.stream_cb = stream_cb
         # 双模型互检：不管置信度，始终让 R1 独立算一遍，两条链路一致才给🟢
         self.dual = bool(dual) and bool(self.reasoner)
 
@@ -195,8 +202,11 @@ class Solver:
 
         def one(idx: int):
             temp = 0.0 if (self.samples == 1 and n == 1) else self.temperature
+            # 只有第一份样本走流式：并发样本同时流式会把界面刷乱，收益也重复
+            cb = self.stream_cb if (start == 0 and idx == 1) else None
             try:
-                out = self.client.chat(messages, temperature=temp, max_tokens=2048)
+                out = self.client.chat(messages, temperature=temp, max_tokens=2048,
+                                       stream_cb=cb)
                 return idx, out, None
             except Exception as exc:  # noqa: BLE001
                 return idx, None, exc
@@ -254,8 +264,38 @@ class Solver:
             except Exception:  # noqa: BLE001
                 return _norm_key(ans)
 
-        # 1) 多次独立采样（失败的样本不计入投票，绝不伪装成答案）
-        ok_samples, ok_details, fail_count = self._collect(messages, self.samples, res)
+        # 1) 采样：自适应模式下先问 1 次，能代入验算通过就不再问其余样本
+        ok_samples, ok_details, fail_count = [], [], 0
+        if self.adaptive and self.samples > 1:
+            ok_samples, ok_details, fail_count = self._collect(messages, 1, res)
+            quick_ok = False
+            if ok_samples:
+                cand = ok_samples[0]
+                cand_fill = extract_fill(ok_details[0]) if ok_details else ""
+                if cand_fill and hints:
+                    try:
+                        cand_fill = qfmt.apply_format(cand_fill, hints)
+                    except Exception:  # noqa: BLE001
+                        pass
+                try:
+                    import verify as _vfy
+                    st, _note = _vfy.verify(question_text, cand, cand_fill)
+                except Exception:  # noqa: BLE001
+                    st = "skip"
+                if st == "ok":
+                    quick_ok = True
+                    res.adaptive = True
+                    res.warnings.append(
+                        f"自适应采样：单次作答 + 代入验算通过，省下 {self.samples - 1} 次调用")
+            if not quick_ok:
+                more_a, more_d, more_f = self._collect(
+                    messages, self.samples - 1, res, start=1)
+                ok_samples += more_a
+                ok_details += more_d
+                fail_count += more_f
+        else:
+            # 多次独立采样（失败的样本不计入投票，绝不伪装成答案）
+            ok_samples, ok_details, fail_count = self._collect(messages, self.samples, res)
 
         # 1b) 有分歧就追加采样：错误率比多花几毛钱重要
         if self.escalate and len(ok_samples) >= 2:
@@ -361,7 +401,8 @@ class Solver:
 
         # 4a) 双模型互检：不管置信度，让 R1 完全独立算一遍
         #     两条链路一致 → 才敢给"高"；不一致 → 追加采样打破平票，仍不一致就降"存疑"
-        if (self.dual and res.answer and "调用失败" not in res.answer
+        if (self.dual and not res.adaptive and res.answer
+                and "调用失败" not in res.answer
                 and res.confidence in ("高", "中")):
             self.progress("双模型互检中（R1 独立再算一遍，约 10-40 秒）…")
             try:

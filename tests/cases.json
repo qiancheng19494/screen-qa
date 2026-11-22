@@ -63,14 +63,6 @@
     "note": "一屏三题"
   },
   {
-    "image": "cases/c01_frac.png",
-    "expect": [
-      "12"
-    ],
-    "mode": "value",
-    "note": "分数系数"
-  },
-  {
     "image": "cases/c02_radical.png",
     "expect": [
       "12"
@@ -243,5 +235,13 @@
     ],
     "mode": "value",
     "note": "分式方程"
+  },
+  {
+    "image": "cases/c01_frac.png",
+    "expect": [
+      "x = 12",
+      "12"
+    ],
+    "note": "自建用例示例（分数题）"
   }
 ]

@@ -118,9 +118,13 @@ def read_with_modlens(image_path: str, timeout_s: int = 300,
     """用 modlens 视觉桥读取图片。"""
     t0 = time.time()
     res = ReadResult(backend="modlens")
+    if not modlens_usable():
+        res.error = "视觉链路在本进程里已判定不可用（前面失败过），本次跳过"
+        return res
     cmd = _modlens_cmd()
     if not cmd:
         res.error = "找不到 modlens（需要 node 或 npx，以及 @liustack/modlens）"
+        _mark_modlens_dead(res.error)
         return res
 
     out_path = Path(tempfile.gettempdir()) / f"modlens_{int(time.time()*1000)}.json"
@@ -140,6 +144,9 @@ def read_with_modlens(image_path: str, timeout_s: int = 300,
         if not out_path.is_file():
             res.error = (stderr[-400:] or f"modlens 退出码 {proc.returncode}")
             res.elapsed = time.time() - t0
+            if res.error and ("spawn" in res.error.lower() or "EPERM" in res.error
+                              or "Every configured vision provider failed" in res.error):
+                _mark_modlens_dead(res.error)
             return res
 
         raw = json.loads(out_path.read_text(encoding="utf-8"))
@@ -175,6 +182,9 @@ def read_with_modlens(image_path: str, timeout_s: int = 300,
             pass
 
     res.elapsed = time.time() - t0
+    if res.error and ("spawn" in res.error.lower() or "EPERM" in res.error
+                      or "找不到" in res.error or "Every configured vision provider failed" in res.error):
+        _mark_modlens_dead(res.error)
     return res
 
 
@@ -206,9 +216,66 @@ def read_with_ocr(image_path: str, timeout_s: int = 120,
 
 
 # --------------------------------------------------------------- 统一入口
+def _norm_compare(text: str) -> str:
+    import re as _re
+    return _re.sub(r"[\s\u3000]+", "", text or "").lower()
+
+
+def _ratio(a: str, b: str) -> float:
+    import difflib
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+_MODLENS_DEAD = False   # 本进程里视觉链路的"永久失败"标记（如沙箱禁 spawn）
+
+
+def _mark_modlens_dead(err: str) -> None:
+    global _MODLENS_DEAD
+    _MODLENS_DEAD = True
+
+
+def modlens_usable() -> bool:
+    return not _MODLENS_DEAD
+
+
+def cross_check_text(image_path: str, ocr_text: str, timeout_s: int = 45,
+                     log=None) -> tuple[str, list[str]]:
+    """双读交叉校验：让视觉模型也读一遍，和本地 OCR 比。
+
+    返回 (要采用的文本, 警告列表)。阈值故意保守——只有两边差得明显才警告，
+    否则正常题每次都提示"读法有分歧"反而吵人。
+    """
+    log = log or (lambda m: None)
+    warns: list[str] = []
+    if not modlens_usable():
+        return ocr_text, warns
+    try:
+        vr = read_with_modlens(image_path, timeout_s=timeout_s)
+    except Exception as exc:  # noqa: BLE001
+        return ocr_text, warns
+    if not vr.text:
+        return ocr_text, warns
+    ratio = _ratio(_norm_compare(ocr_text), _norm_compare(vr.text))
+    if ratio < 0.55:
+        warns.append(
+            f"⚠ OCR 与视觉模型读到的题面差异较大（相似度 {ratio:.0%}），"
+            f"请核对是不是被读错了：\n[本地 OCR] {ocr_text.strip()[:160]}\n"
+            f"[视觉模型] {vr.text.strip()[:160]}")
+        log(f"双读不一致（相似度 {ratio:.0%}），已在提示里标出两版原文")
+    else:
+        log(f"双读一致（相似度 {ratio:.0%}）")
+    # 采用字数更多的那个（少字往往就是被吞掉的符号/整行）
+    if len(_norm_compare(vr.text)) > len(_norm_compare(ocr_text)) * 1.15:
+        return vr.text, warns
+    return ocr_text, warns
+
+
 def read_image(image_path: str, order: list[str] | None = None,
                modlens_timeout: int = 300, log=None,
-               ocr_quality: str = "standard") -> ReadResult:
+               ocr_quality: str = "standard",
+               cross_check: bool = False) -> ReadResult:
     """按顺序尝试各后端，第一个成功的返回。
 
     order 默认 ["modlens", "winocr"]；["winocr"] 可跳过视觉模型（快）。
@@ -238,6 +305,15 @@ def read_image(image_path: str, order: list[str] | None = None,
             score = _text_score(first.text)
             if score >= VISION_FALLBACK_SCORE and len(first.text.strip()) >= 25:
                 log(f"本地 OCR 够用（质量 {score:.0f}），跳过视觉模型")
+                if cross_check:
+                    txt, warns = cross_check_text(
+                        image_path, first.text, timeout_s=min(modlens_timeout, 45),
+                        log=log)
+                    if txt != first.text:
+                        first.text = txt
+                        first.warnings = list(first.warnings) + ["双读交叉校验：采用了视觉模型版本"]
+                    if warns:
+                        first.warnings = list(first.warnings) + warns
                 return first
             log(f"本地 OCR 质量偏低（{score:.0f}），再用视觉模型看一次…")
             errors.append(f"winocr 质量偏低（{score:.0f}）")

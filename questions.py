@@ -219,3 +219,21 @@ def apply_format(fill: str, hint: dict) -> str:
             if fr.denominator != 1 and abs(float(fr) - v) < 1e-9:
                 out = f"{fr.numerator}/{fr.denominator}"
     return out
+
+
+_NUM_TOKEN = re.compile(r"-?\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?")
+
+
+def numbers_in(text: str) -> list[float]:
+    """把题面里的数字抠出来（含分数、负数、小数），用于模糊缓存签名与剪贴板校验。"""
+    out: list[float] = []
+    for tok in _NUM_TOKEN.findall(text or ""):
+        try:
+            if "/" in tok:
+                a, b = tok.split("/")
+                out.append(float(a) / float(b) if float(b) else float(a))
+            else:
+                out.append(float(tok))
+        except Exception:  # noqa: BLE001
+            continue
+    return out

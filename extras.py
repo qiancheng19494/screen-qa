@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -462,3 +463,32 @@ def prepare_update(dest=None, timeout: int = 120) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": "解包失败：%s" % exc}
     return {"ok": True, "path": str(out_dir), "files": count, "bytes": len(blob)}
+
+
+def apply_update(src=None, dest=None, keep=("config.json",), timeout: int = 0) -> dict:
+    """把 _update 里的文件覆盖到程序目录（不覆盖 keep 里的名字与 history 等目录）。
+
+    只做"复制覆盖"，不做删除——旧版本多出来的文件留着不影响运行，
+    这样更新失败也不会把程序弄成半坏的。
+    """
+    src_dir = Path(src) if src else _app_dir() / "_update"
+    dst_dir = Path(dest) if dest else _app_dir()
+    if not src_dir.exists():
+        raise FileNotFoundError(f"没有可安装的更新：{src_dir}")
+    keep_set = {k.lower() for k in keep}
+    copied = skipped = 0
+    for item in src_dir.rglob("*"):
+        if item.is_dir():
+            continue
+        rel = item.relative_to(src_dir)
+        if rel.name.lower() in keep_set:
+            skipped += 1
+            continue
+        target = dst_dir / rel
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+            copied += 1
+        except Exception:  # noqa: BLE001
+            skipped += 1
+    return {"copied": copied, "skipped": skipped, "src": str(src_dir), "dst": str(dst_dir)}
