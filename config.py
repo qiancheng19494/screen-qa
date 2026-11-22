@@ -74,7 +74,7 @@ DEFAULTS = {
     "adaptive": True,        # 自适应采样：单次作答 + 验算通过就不再问
     "stream": True,          # 流式输出（等待感更轻）
     "fuzzy_cache": True,     # 模糊缓存：题面差几个字也能命中
-    "cross_check": True,     # 双读交叉校验（OCR vs 视觉模型）
+    "cross_check": False,    # 双读交叉校验（OCR vs 视觉模型）——默认关：视觉冷启动可能很慢
     "compact": False,        # 紧凑模式（小屏）
     "watch_titles": "",
     "tts": False,
