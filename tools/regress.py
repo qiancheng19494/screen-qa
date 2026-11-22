@@ -113,6 +113,8 @@ def main() -> int:
     ap.add_argument("--samples", type=int, default=0, help="覆盖采样次数")
     ap.add_argument("--fast", action="store_true", help="极速模式（1 次采样、不审核）")
     ap.add_argument("--json", default="")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="每条用例跑几次（看稳定性，默认 1）")
     args = ap.parse_args()
 
     try:
@@ -135,17 +137,30 @@ def main() -> int:
           f"缓存={'开' if args.use_cache else '关'} · 极速={'是' if args.fast else '否'}")
     print("-" * 78)
     rows = []
+    repeat = max(1, min(5, int(args.repeat or 1)))
+    stability = []
     for i, case in enumerate(cases, 1):
-        row = run_case(case, cfg, args.use_cache)
+        tries = [run_case(case, cfg, args.use_cache) for _ in range(repeat)]
+        row = dict(tries[0])
+        hits = sum(1 for t in tries if t.get("ok"))
+        row["hits"] = hits
+        row["tries"] = repeat
+        row["answers"] = [str(t.get("answer", ""))[:28] for t in tries]
+        row["elapsed"] = sum(t.get("elapsed", 0) for t in tries) / repeat
+        row["tokens"] = int(sum(t.get("tokens", 0) for t in tries) / repeat)
+        row["ok"] = hits == repeat
+        stability.append((case.get("image", ""), hits, repeat))
         rows.append(row)
         if row.get("err"):
             print(f"{i:2}. ❌ {case['image']:<26} {row['err']}")
             continue
-        mark = "✅" if row["ok"] else "❌"
+        mark = "✅" if row["ok"] else ("⚠" if row.get("hits") else "❌")
         print(f"{i:2}. {mark} {case['image']:<26} 答案={row['answer'][:22]:<24} "
               f"填入={str(row['fill'])[:10]:<10} {row['confidence']} "
               f"验算={row['check'] or '-':<4} {row['elapsed']:>5.1f}s "
-              f"{row['tokens']:>5}tok{'  [缓存]' if row['cached'] else ''}")
+              f"{row['tokens']:>5}tok"
+              + (f"  {row['hits']}/{row['tries']}" if row.get("tries", 1) > 1 else "")
+              + ("  [缓存]" if row['cached'] else ""))
     ok = sum(1 for r in rows if r.get("ok"))
     ocr_limited = [r for r in rows
                    if not r.get("ok") and (r.get("case") or {}).get("known_ocr_limit")]
@@ -160,13 +175,19 @@ def main() -> int:
         model_ok = ok
         print(f"其中受本地 OCR 限制（纯符号行丢失/系数被吞）：{len(ocr_limited)} 条 → {names}")
         print(f"在能读到的题面上：{model_ok}/{readable} = {model_ok / max(1, readable):.0%}")
+    unstable = [x for x in stability if 0 < x[1] < x[2]]
+    if repeat > 1:
+        stable_n = sum(1 for x in stability if x[1] == x[2])
+        print(f"稳定性：{stable_n}/{len(stability)} 条 {repeat} 次全对 · 不稳 {len(unstable)} 条")
+        for name, hits, tries in unstable:
+            print(f"  · {name.split('/')[-1]:<24} {hits}/{tries}")
     print(f"正确 {ok}/{len(rows)} = {ok / max(1, len(rows)):.0%} · "
           f"总耗时 {total_t:.1f}s · 平均 {total_t / max(1, len(used)):.1f}s/题 · "
           f"{total_tok} tokens · 约 ¥{cost:.4f}")
     if args.json:
         Path(args.json).write_text(
             json.dumps({"rows": rows, "ok": ok, "total": len(rows),
-                        "elapsed": total_t, "tokens": total_tok},
+                        "repeat": repeat, "elapsed": total_t, "tokens": total_tok},
                        ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"明细已写入 {args.json}")
     return 0 if ok == len(rows) else 1

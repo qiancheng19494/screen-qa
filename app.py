@@ -819,6 +819,8 @@ class App:
         # v2.6：迷你浮窗 / 纯文字 / 窗口截图 / 函数图像 / 朗读 / 剪贴板监听
         self.mini = None
         self.last_image_path = ""
+        self.last_job = None
+        self._failed = False
         self.shot_path = ""
         self.plot_img = None
         self._clip_seq = 0
@@ -1313,6 +1315,8 @@ class App:
         if self.busy:
             return
         self.last_image_path = str(path)
+        self.last_job = ("image", str(path))
+        self._failed = False
         self.busy = True
         self._set_buttons(False)
         self.set_status("处理中…")
@@ -1588,6 +1592,10 @@ class App:
                         self._stop_anim()
                 elif kind == "finish":
                     self._finish(payload)
+                elif kind == "warmup":
+                    self._show_warmup(str(payload))
+                elif kind == "update":
+                    self._on_update_info(payload)
         except queue.Empty:
             pass
 
@@ -1707,7 +1715,8 @@ class App:
             self.text.delete("1.0", "end")
             self.text.insert("end", "❌ 失败：\n", "err")
             self.text.insert("end", str(payload.get("error")) + "\n")
-            self.set_status("失败 · 见详情")
+            self.set_status(prompts.MSG_RETRY_STATUS)
+            self._enable_retry()
             self._beep("warn")
             return
 
@@ -1720,12 +1729,15 @@ class App:
             self._flash(UI["red"])
             self.text.delete("1.0", "end")
             self.text.insert("end", f"❌ {res.error}\n", "err")
-            self.set_status("调用失败")
+            self.set_status(prompts.MSG_RETRY_STATUS)
+            self._enable_retry()
             self._beep("warn")
             return
 
         self.last_payload = payload
+        self._failed = False
         self.b_copy.set_enabled(True)
+        self.b_redo.set_text(prompts.L("redo"))
         self.b_redo.set_enabled(True)
         items = payload.get("items") or [res]
         self.multi_items = items
@@ -1922,12 +1934,142 @@ class App:
         except Exception as exc:
             return f"❌ 视觉自检异常：{type(exc).__name__}: {exc}"
 
+    def _enable_retry(self):
+        self._failed = True
+        try:
+            if self.last_job:
+                self.b_redo.set_text(prompts.LBL_RETRY)
+                self.b_redo.set_enabled(True)
+            else:
+                self.b_redo.set_enabled(False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def retry(self):
+        """失败后一键重试：图片就原图重跑一次，文字就原文字重跑一次。"""
+        if self.busy or not self.last_job:
+            return
+        kind, val = self.last_job
+        self.set_status(prompts.MSG_RETRY_RUN)
+        if kind == "text":
+            self._start_text(val)
+        else:
+            self._run_path(val, bypass=False)
+
     def redo(self):
-        """重算这一次（跳过缓存，多问几路，置信度低的时候用）。"""
-        if self.busy or not self.last_image:
+        """失败 → 重试；成功 → 重算（跳过缓存，多问几路）。"""
+        if self.busy:
+            return
+        if self._failed:
+            return self.retry()
+        if not self.last_image:
             return
         self.set_status("重算中（跳过缓存）…")
         self._run_path(self.last_image, bypass=True)
+
+    def warmup(self):
+        """考前热身：查一遍环境，再用两张真实题图各跑一次（samples=1，省钱）。"""
+        if self.busy:
+            return
+        self.busy = True
+        self._set_buttons(False)
+        self.set_status("热身中…")
+        self._set_pulse(True)
+        cfg = dict(self._current_cfg())
+        cfg.update({"samples": 1, "verify": False, "escalate": False,
+                    "cache": False, "multi": False, "dual": False,
+                    "reasoner": False, "sound": False, "auto_copy": False})
+
+        def emit(kind, payload):
+            self.q.put((kind, payload))
+
+        def work():
+            lines = [prompts.WARMUP_HEAD]
+            ok_n = 0
+            cases = [("c01_frac", "cases/c01_frac.png"),
+                     ("c04_ineq", "cases/c04_ineq.png")]
+            try:
+                key = str(cfg.get("api_key") or "")
+                if len(key) > 12 and key.startswith("sk-"):
+                    lines.append(prompts.WARMUP_KEY_OK.format(tail=key[-4:]))
+                else:
+                    lines.append(prompts.WARMUP_KEY_BAD)
+                try:
+                    cli = DeepSeekClient(api_key=key,
+                                         base_url=cfg.get("base_url", "https://api.deepseek.com"),
+                                         model=cfg.get("model", "deepseek-chat"))
+                    bal = cli.balance(timeout=10)
+                    if bal.get("ok"):
+                        lines.append(prompts.WARMUP_BAL.format(
+                            text=f"{bal.get('amount')} {bal.get('currency')}"))
+                    else:
+                        lines.append(prompts.WARMUP_BAL.format(text="⚠ 查询失败"))
+                except Exception as exc:  # noqa: BLE001
+                    lines.append(prompts.WARMUP_BAL.format(text=f"⚠ {exc}"))
+                try:
+                    import psocr
+                    lines.append(prompts.WARMUP_OCR.format(
+                        text="✅ 可用" if psocr.available() else "❌ 不可用"))
+                except Exception as exc:  # noqa: BLE001
+                    lines.append(prompts.WARMUP_OCR.format(text=f"❌ {exc}"))
+                try:
+                    st = reader.backend_status()
+                    mv = st.get("modlens") or {}
+                    lines.append(prompts.WARMUP_VIS.format(
+                        text="✅ 找到 modlens" if mv.get("available") else "⚠ 不可用（会自动降级 OCR）"))
+                except Exception as exc:  # noqa: BLE001
+                    lines.append(prompts.WARMUP_VIS.format(text=f"⚠ {exc}"))
+                try:
+                    bound = getattr(self.hk, "bound", {}) or {}
+                    lines.append(prompts.WARMUP_HOTKEY.format(
+                        text="、".join(f"{k}={v}" for k, v in bound.items()) or "⚠ 没注册上"))
+                except Exception:  # noqa: BLE001
+                    lines.append(prompts.WARMUP_HOTKEY.format(text="⚠ 未知"))
+                for name, rel in cases:
+                    pth = ROOT / rel
+                    if not pth.exists():
+                        lines.append(prompts.WARMUP_CASE.format(name=name, text="⚠ 缺图，跳过"))
+                        continue
+                    t0 = time.time()
+                    out = run_pipeline(str(pth), cfg, emit)
+                    if out.get("ok"):
+                        res = out["result"]
+                        ok_n += 1
+                        lines.append(prompts.WARMUP_CASE.format(
+                            name=name,
+                            text=f"✅ {str(res.answer)[:28]}（{time.time()-t0:.1f}s）"))
+                    else:
+                        lines.append(prompts.WARMUP_CASE.format(
+                            name=name, text=f"❌ {str(out.get('error'))[:40]}"))
+            except Exception:  # noqa: BLE001
+                lines.append("\n（热身过程中出错）\n" + traceback.format_exc()[-500:])
+            finally:
+                bad = len(cases) - ok_n
+                if ok_n == len(cases):
+                    verdict = prompts.WARMUP_PASS.format(ok=ok_n, n=len(cases))
+                elif ok_n > 0:
+                    verdict = prompts.WARMUP_PART.format(bad=bad)
+                else:
+                    verdict = prompts.WARMUP_FAIL
+                self.q.put(("warmup", "".join(lines) + prompts.WARMUP_TAIL.format(verdict=verdict)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_warmup(self, text: str):
+        self.busy = False
+        self._set_buttons(True)
+        self._set_pulse(False)
+        self.set_status("热身完成")
+        try:
+            self.text.delete("1.0", "end")
+            self.text.insert("end", text)
+        except Exception:  # noqa: BLE001
+            pass
+        self.log("考前热身完成")
+        try:
+            messagebox.showinfo(prompts.WARMUP_TITLE, text[:1500], parent=self.root)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _render_multi(self, items):
         """一屏多题时，给每题一个「复制」按钮（最多 8 题）+ 一个「下一题」。"""
@@ -2375,21 +2517,24 @@ class App:
         threading.Thread(target=worker, daemon=True).start()
 
     def check_update_async(self):
+        """后台查更新（线程里只放队列，不碰 Tk —— root.after 在非主线程不安全）。"""
         def worker():
-            info = extras.check_update()
-            def show():
-                self.update_info = info
-                if info.get("ok") and info.get("behind"):
-                    self.log(f"⬆ 有新版本 {info.get('latest')}（{info.get('message', '')[:40]}）")
-                    try:
-                        self.set_status(f"有新版本 {info.get('latest')} · "
-                                        f"⚙ 里可查看")
-                    except Exception:  # noqa: BLE001
-                        pass
-                elif info.get("ok"):
-                    self.log(f"已是最新版本（{info.get('latest')}）")
-            self.root.after(0, show)
+            try:
+                info = extras.check_update()
+            except Exception as exc:  # noqa: BLE001
+                info = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            self.q.put(("update", info))
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_info(self, info):
+        self.update_info = info
+        if info.get("ok") and info.get("behind"):
+            self.log(f"⬆ 有新版本 {info.get('latest')}（{info.get('message', '')[:40]}）")
+            self.set_status(f"有新版本 {info.get('latest')} · ⚙ 里可查看")
+        elif info.get("ok"):
+            self.log(f"已是最新版本（{info.get('latest')}）")
+        else:
+            self.log(f"更新检查失败：{info.get('error', '')[:120]}")
 
     # ------------------------------------------------------------ 托盘
     def _setup_tray(self):
@@ -2785,6 +2930,8 @@ class App:
 
         row7 = tk.Frame(frm, bg=bg)
         row7.grid(row=10, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        Pill(row7, prompts.LBL_WARMUP, self.warmup, kind="flat", height=26,
+             padx=12, font_size=9).pack(side="left", padx=(0, 6))
         Pill(row7, prompts.L("update"), do_update, kind="flat", height=26,
              padx=12, font_size=9, bg=bg).pack(side="left")
         Pill(row7, prompts.L("history"), self.open_history, kind="flat", height=26,
@@ -2903,6 +3050,8 @@ class App:
         self._start_text(text)
 
     def _start_text(self, text: str):
+        self.last_job = ("text", text)
+        self._failed = False
         self.busy = True
         self._set_buttons(False)
         self._set_pulse(True)
