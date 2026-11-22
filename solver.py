@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import codingq
 import time
 from dataclasses import dataclass, field
 
@@ -275,6 +276,7 @@ class Solver:
         import time
 
         t0 = time.time()
+        _coding = codingq.is_coding(question_text)
         res = SolveResult(question_text=question_text)
         # 先把"这题要什么格式"抠出来，既塞进提示词，也对最终答案做后处理
         hints = qfmt.format_hint(question_text)
@@ -283,7 +285,8 @@ class Solver:
         if hint_line:
             user_text += f"\n\n（本题答案格式要求：{hint_line}。填入答案必须严格符合这个格式。）"
         messages = [
-            {"role": "system", "content": FEISHU_SYSTEM},
+            {"role": "system", "content":
+                (codingq.CODING_SYSTEM if codingq.is_coding(question_text) else FEISHU_SYSTEM)},
             {"role": "user", "content": user_text},
         ]
 
@@ -540,12 +543,26 @@ class Solver:
             except Exception:  # noqa: BLE001
                 pass
 
-        # 6) 本地验算：把答案代回原式，不依赖模型的独立正确性信号
+        # 6) 本地校验：数学题代入验算；编程题用 compile() 检查修正代码
         try:
             import verify as _vfy
-            res.check, res.check_note = _vfy.verify(question_text, res.answer, res.fill)
+            if _coding:
+                _code = codingq.extract_code(res.reasoning or "")
+                if _code:
+                    _ok, _err = codingq.check_syntax(_code)
+                    res.check = "ok" if _ok else "fail"
+                    res.check_note = ("修正后的代码语法检查通过" if _ok
+                                      else f"修正代码仍有语法错误：{_err}")
+                    if not _ok:
+                        res.warnings.append(f"代码语法检查未通过（{_err}）")
+                else:
+                    res.check, res.check_note = "skip", "编程题：未给出可检查的代码块"
+            else:
+                res.check, res.check_note = _vfy.verify(
+                    question_text, res.answer, res.fill)
         except Exception as exc:  # noqa: BLE001
             res.check, res.check_note = "skip", f"验算不可用：{exc}"
+
         try:
             import ocrcheck
             res.warnings.extend(ocrcheck.audit(question_text, res.answer, res.fill,
