@@ -58,7 +58,7 @@ def warmup() -> bool:
         return False
 
 
-def recognize(path: str | Path, min_side: int = 0) -> str:
+def recognize(path: str | Path, min_side: int = 0, code_mode: bool = False) -> str:
     """返回按行拼接的文本；失败抛异常由上层兜底。"""
     eng = _engine()
     result, _elapse = eng(str(path))
@@ -70,7 +70,18 @@ def recognize(path: str | Path, min_side: int = 0) -> str:
             box, text, score = item[0], item[1], (item[2] if len(item) > 2 else 1.0)
         except Exception:  # noqa: BLE001
             continue
+        xs = [p[0] for p in box]
         ys = [p[1] for p in box]
-        rows.append((min(ys), str(text)))
+        rows.append((min(ys), min(xs), str(text)))
     rows.sort(key=lambda r: r[0])
-    return "\n".join(t for _y, t in rows).strip()
+    if not code_mode or not rows:
+        return "\n".join(t for _y, _x, t in rows).strip()
+    # 代码模式：按行首 x 坐标还原缩进层级（RapidOCR 会丢缩进，代码题必须补回来）
+    base = min(r[1] for r in rows)
+    heights = [abs(rows[i + 1][0] - rows[i][0]) for i in range(len(rows) - 1)] or [20]
+    char_w = max(6.0, sorted(heights)[len(heights) // 2] * 0.42)
+    out = []
+    for _y, x, t in rows:
+        level = int(round((x - base) / (char_w * 4)))
+        out.append("    " * max(0, min(level, 6)) + t)
+    return "\n".join(out).strip()
