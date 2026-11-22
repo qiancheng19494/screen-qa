@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import codingq
+import subjects
 import time
 from dataclasses import dataclass, field
 
@@ -326,7 +327,7 @@ class Solver:
             user_text += f"\n\n（本题答案格式要求：{hint_line}。填入答案必须严格符合这个格式。）"
         messages = [
             {"role": "system", "content":
-                (codingq.CODING_SYSTEM if codingq.is_coding(question_text) else FEISHU_SYSTEM)},
+                (subjects.system_for(_txt) or FEISHU_SYSTEM)},
             {"role": "user", "content": user_text},
         ]
 
