@@ -317,7 +317,7 @@ def read_image(image_path: str, order: list[str] | None = None,
                     cross_check = True
                 if cross_check:
                     txt, warns = cross_check_text(
-                        image_path, first.text, timeout_s=min(modlens_timeout, 45),
+                        image_path, first.text, timeout_s=min(modlens_timeout, 20),
                         log=log)
                     if txt != first.text:
                         first.text = txt

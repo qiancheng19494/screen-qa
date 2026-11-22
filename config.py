@@ -100,6 +100,9 @@ def load() -> dict:
             raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 cfg.update({k: v for k, v in raw.items() if k in DEFAULTS})
+                # v2.13: 密文 Key（DPAPI）在这里解密成明文供程序使用
+                if str(cfg.get("api_key", "")).startswith("enc:"):
+                    cfg["api_key"] = decrypt_key(cfg["api_key"])
         except Exception:  # noqa: BLE001
             pass
     # 布尔字段一律归一（避免 BooleanVar 的 tristate None 写进配置）
@@ -121,6 +124,11 @@ def load() -> dict:
 def save(cfg: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     data = {k: cfg.get(k, DEFAULTS[k]) for k in DEFAULTS}
+    _key = str(data.get("api_key", ""))
+    if _key and not _key.startswith("enc:"):
+        _enc = encrypt_key(_key)
+        if _enc:
+            data["api_key"] = _enc
     CONFIG_PATH.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -320,3 +328,71 @@ def queue_pop():
     except Exception:  # noqa: BLE001
         pass
     return first
+
+# ---------- v2.13: API Key 落盘加密（Windows DPAPI，当前用户绑定） ----------
+def _dpapi(data: bytes, encrypt: bool) -> bytes:
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data, len(data))
+    blob_in = DATA_BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    blob_out = DATA_BLOB()
+    fn = (ctypes.windll.crypt32.CryptProtectData if encrypt
+          else ctypes.windll.crypt32.CryptUnprotectData)
+    if encrypt:
+        ok = fn(ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out))
+    else:
+        ok = fn(ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out))
+    if not ok:
+        raise OSError("DPAPI failed")
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+
+
+def encrypt_key(key: str) -> str:
+    if not key:
+        return ""
+    try:
+        import base64
+        return "enc:" + base64.b64encode(_dpapi(key.encode("utf-8"), True)).decode("ascii")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def decrypt_key(stored: str) -> str:
+    if not stored:
+        return ""
+    if not stored.startswith("enc:"):
+        return stored
+    try:
+        import base64
+        raw = base64.b64decode(stored[4:].encode("ascii"))
+        return _dpapi(raw, False).decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def protect_key_in_file(path=None):
+    """把 config.json 里的明文 api_key 就地换成密文（幂等）。"""
+    path = path or CONFIG_PATH
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return False
+    key = str(data.get("api_key") or "")
+    if not key or key.startswith("enc:"):
+        return False
+    enc = encrypt_key(key)
+    if not enc:
+        return False
+    data["api_key"] = enc
+    try:
+        Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception:  # noqa: BLE001
+        return False

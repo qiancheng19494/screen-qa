@@ -107,6 +107,9 @@ def extract_latex(text: str) -> str:
     return out[:300]
 
 
+_SECTION_WORD = re.compile(r"^\s*##?\s*(LaTeX|推理|最终答案|填入答案|复核|参考答案)\s*$", re.I)
+
+
 def extract_fill(text: str) -> str:
     """抠出「填入答案」（MyMathLab/Canvas 输入框要原样敲的值）。没写就返回空串。"""
     if not text:
@@ -119,6 +122,9 @@ def extract_fill(text: str) -> str:
     raw = (raw or "").strip().strip("*` ")
     raw = raw.split("\n")[0].strip()
     if raw in ("", "无", "—", "-", "不适用", "N/A"):
+        return ""
+    # 空段后面紧跟下一个标题时，正则会把标题吞进来（如 "## LaTeX"）
+    if raw.startswith("#") or _SECTION_WORD.match(raw):
         return ""
     # 去掉模型偶尔加的前缀
     raw = re.sub(r"^填入(答案)?[：:]\s*", "", raw)
@@ -375,6 +381,8 @@ class Solver:
         res.answer = best_answer
         res.reasoning = best_detail
         res.fill = extract_fill(best_detail)
+        if not res.fill and re.fullmatch(r"\s*[A-Da-d]\s*", res.answer or ""):
+            res.fill = (res.answer or "").strip().upper()
         res.latex = extract_latex(best_detail)
 
         # 3) 交叉审核（样本有分歧，或始终开启）
