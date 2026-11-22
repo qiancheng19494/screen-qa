@@ -2534,6 +2534,16 @@ class App:
                 f"会用 {upd} 里的文件覆盖当前程序（config.json、history、缓存都保留）。\n"
                 "覆盖后需要重开程序。继续？"):
             return
+        if getattr(sys, "frozen", False):
+            # 打包版：正在运行的 exe 不能被覆盖，交给批处理「等本进程退出→替换→重启」
+            info = extras.apply_update_now()
+            if not info.get("ok"):
+                messagebox.showerror("安装更新", f"失败：{info.get('error')}")
+                return
+            messagebox.showinfo("安装更新",
+                                "已安排替换：程序会关闭，2 秒后自动覆盖并重新启动。")
+            self._quit()
+            return
         try:
             info = extras.apply_update(keep=("config.json", "history", "_tmp", "_app.log"))
         except Exception as exc:  # noqa: BLE001
@@ -2962,9 +2972,17 @@ class App:
 
     def _on_update_info(self, info):
         self.update_info = info
-        if info.get("ok") and info.get("behind"):
-            self.log(f"⬆ 有新版本 {info.get('latest')}（{info.get('message', '')[:40]}）")
-            self.set_status(f"有新版本 {info.get('latest')} · ⚙ 里可查看")
+        latest = str(info.get("latest") or "")
+        seen = str(self.cfg.get("last_update_sha") or "")
+        if info.get("ok") and latest and latest != seen:
+            # 只在"第一次见到这个提交"时提醒，避免每次启动都刷
+            self.cfg["last_update_sha"] = latest
+            try:
+                cfg_mod.save(self.cfg)
+            except Exception:  # noqa: BLE001
+                pass
+            self.log(f"⬆ 远端有新提交 {latest[:7]}（{info.get('message', '')[:40]}）")
+            self.set_status(f"远端有新提交 {latest[:7]} · ⚙ 里可下载")
         elif info.get("ok"):
             self.log(f"已是最新版本（{info.get('latest')}）")
         else:
@@ -3771,11 +3789,14 @@ class App:
         if not self.last_payload:
             return
         text = self.last_payload.get("text") or ""
-        expr = plotter.extract_function(text)
-        if not expr:
+        exprs = plotter.extract_functions(text)
+        if not exprs:
+            expr1 = plotter.extract_function(text)
+            exprs = [expr1] if expr1 else []
+        if not exprs:
             self.set_status("题目里没找到 f(x)=… / y=… 形式的函数")
             return
-        img = plotter.plot_function(expr)
+        img = plotter.plot_multi(exprs) if len(exprs) > 1 else plotter.plot_function(exprs[0])
         if img is None:
             self.set_status("这个函数画不出来（表达式可能带 OCR 噪声）")
             return

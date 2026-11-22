@@ -1,0 +1,113 @@
+{
+  "_q9.png": {
+    "text": "Question 9 of 1 2\nSolve fo r × ·\n9 × + 6 = 60\nEnter your answer here\nE nte r your answer in the answer box and then click Check Answer.",
+    "answer": "x = 6",
+    "fill": "6",
+    "check": "ok",
+    "confidence": "高",
+    "elapsed": 2.9,
+    "expect": [
+      "x = 6",
+      "6"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  },
+  "_q11.png": {
+    "text": "Question 1 1 of 1 2\nFind a 日 solutions ofthe equation.\nxA2-5x + 6 = 0\n亠\nEnter both answers, smaller first.\n亠",
+    "answer": "2, 3",
+    "fill": "2, 3",
+    "check": "ok",
+    "confidence": "高",
+    "elapsed": 2.38,
+    "expect": [
+      "2, 3"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  },
+  "_mathlab_single.png": {
+    "text": "Question 3 of 1 2\nSolve fo r × ·\n4 × 一 7 = 5\nEnter your answer here\nE nte r your answer in the answer box and then click Check Answer.",
+    "answer": "x = 3",
+    "fill": "3",
+    "check": "skip",
+    "confidence": "高",
+    "elapsed": 1.72,
+    "expect": [
+      "x = 3",
+      "3"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  },
+  "_mathlab_q7.png": {
+    "text": "Question 7 of 1 2\nSolve fo r × ·\n5 × + 9 = 34\nEnter your answer here\nE nte r your answer in the answer box and then click Check Answer.",
+    "answer": "x = 5",
+    "fill": "5",
+    "check": "ok",
+    "confidence": "高",
+    "elapsed": 1.53,
+    "expect": [
+      "x = 5",
+      "5"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  },
+  "_lowcontrast_test.png": {
+    "text": "解 方 程 ： 2 ( × 十 3 )\n= 14\nA. x = 2 B. x = 4 C. x = 5 D. x = 7\n提 示 ： 先 去 括 号 再 移 项",
+    "answer": "B. x = 4",
+    "fill": "B",
+    "check": "skip",
+    "confidence": "高",
+    "elapsed": 2.1,
+    "expect": [
+      "x = 4",
+      "4"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  },
+  "_zh_test.png": {
+    "text": "1 2 · 某 商 品 的 成 本 为 80 元 ， 按 标 价 的 八 折 出 售 ， 仍 可 获 利 20 % ，\n则 该 商 品 的 标 价 是 多 少 元 ？\nA. 100 元\nB. 120 元\nC. 1 50 元\nD. 160 元",
+    "answer": "B. 120 元",
+    "fill": "B",
+    "check": "skip",
+    "confidence": "高",
+    "elapsed": 2.31,
+    "expect": [
+      "B",
+      "120"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  },
+  "_zh_test3.png": {
+    "text": "Evaluate the limit:\nlim 一 n 卩 刈 / 刈 ]\nA. 0 B. 3 / 5 5 / 3 D. 1\nHint: 洛 必 达 法 则 或 等 价 无 穷 小 sin(3x)",
+    "answer": "B. 3/5",
+    "fill": "B",
+    "check": "skip",
+    "confidence": "高",
+    "elapsed": 2.34,
+    "expect": [
+      "3/5"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  },
+  "_mathlab_multi_big.png": {
+    "text": "Homework 5 一 due tonight\n1 ， Solve for × ， 6 × + 5 = 29\n2 ， Simplify: ( 2 × ^ 3 ) ( 3 × ^ 2 )\nA. 6 × ^ 5 & 5x ^ 5 C. 6x ^ 6 D. 5x ^ 6\n3 ， A shirt costs $ 80 ， lt is sold at 20 % off\nWhat is the sale price?",
+    "answer": "1. x = 4；2. A（6x^5）；3. $64",
+    "fill": "4, A, 64",
+    "check": "skip",
+    "confidence": "中",
+    "elapsed": 2.6,
+    "expect": [
+      "4",
+      "A",
+      "64"
+    ],
+    "mode": "text",
+    "known_ocr_limit": false
+  }
+}

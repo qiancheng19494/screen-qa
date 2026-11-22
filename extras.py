@@ -15,6 +15,8 @@ import threading
 import time
 import urllib.request
 from ctypes import wintypes
+import os
+import sys
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -109,7 +111,7 @@ def set_autostart(enable: bool) -> bool:
 
 
 # ----------------------------------------------------------------- 版本检查
-LOCAL_VERSION = "2.6.0"
+LOCAL_VERSION = "2.14"
 
 
 def check_update(timeout: float = 8.0) -> dict:
@@ -131,7 +133,7 @@ def check_update(timeout: float = 8.0) -> dict:
         msg = str((data.get("commit") or {}).get("message", "")).splitlines()[0]
         out.update(ok=True, latest=sha, message=msg,
                    url=str(data.get("html_url", "")),
-                   behind=bool(sha) and sha != LOCAL_VERSION)
+                   behind=bool(sha))
     except Exception as exc:  # noqa: BLE001
         out["error"] = f"{type(exc).__name__}: {exc}"
     return out
@@ -578,3 +580,38 @@ def export_card(rec: dict, shot_path: str, path, width: int = 560) -> str:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     img.save(path)
     return path
+
+def write_update_bat(src=None, dst=None) -> dict:
+    """生成一个"等本进程退出后再覆盖、然后重启"的批处理（exe 版自动替换用）。"""
+    import os
+    src = Path(src) if src else Path(_app_dir()) / "_update"
+    dst = Path(dst) if dst else Path(_app_dir())
+    if not src.exists():
+        return {"ok": False, "error": "没有找到 _update 目录（先点『下载更新』）"}
+    exe = Path(sys.executable) if getattr(sys, "frozen", False) else (dst / "屏幕问答.exe")
+    bat = dst / "_apply_update.bat"
+    body = "\r\n".join([
+        "@echo off",
+        "chcp 65001 >nul",
+        "timeout /t 2 /nobreak >nul",
+        f'xcopy /E /Y /I "{src}\\*" "{dst}\\" >nul',
+        f'start "" "{exe}"',
+        'del "%~f0"',
+    ])
+    try:
+        bat.write_text(body, encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"写批处理失败：{exc}"}
+    return {"ok": True, "bat": str(bat), "src": str(src), "dst": str(dst)}
+
+
+def apply_update_now(src=None, dst=None) -> dict:
+    """启动替换脚本（当前进程随后应退出）。"""
+    info = write_update_bat(src, dst)
+    if not info.get("ok"):
+        return info
+    try:
+        os.startfile(info["bat"])  # noqa: S606
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"启动批处理失败：{exc}"}
+    return info
