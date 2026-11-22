@@ -90,21 +90,21 @@ DARK_UI = {
     "red_bg": "#2c1618",
 }
 LIGHT_UI = {
-    "bg": "#eef1f6",
+    "bg": "#f2f5fa",
     "card": "#ffffff",
-    "card2": "#f7f9fc",
-    "border": "#d3dae4",
-    "text": "#151922",
-    "dim": "#4a5361",
-    "muted": "#7c8593",
-    "accent": "#2563eb",
-    "green": "#0f7a52",
-    "accent_bg": "#dbe7ff",
-    "green_bg": "#d6f5e6",
-    "amber": "#9a6508",
-    "amber_bg": "#fdf0d2",
-    "red": "#c02626",
-    "red_bg": "#fbe0e0",
+    "card2": "#f7f9fd",
+    "border": "#e3e9f2",
+    "text": "#111827",
+    "dim": "#4b5563",
+    "muted": "#8b95a7",
+    "accent": "#3b82f6",
+    "green": "#16a34a",
+    "accent_bg": "#e6efff",
+    "green_bg": "#e3f8ec",
+    "amber": "#b45309",
+    "amber_bg": "#fdf1dd",
+    "red": "#dc2626",
+    "red_bg": "#fdeaea",
 }
 UI = dict(DARK_UI)
 
@@ -154,7 +154,9 @@ def apply_theme(name: str) -> str:
     src = LIGHT_UI if str(name).lower() == "light" else DARK_UI
     UI.clear()
     UI.update(src)
-    return "light" if src is LIGHT_UI else "dark"
+    _is_light = src is LIGHT_UI
+    UI["light"] = _is_light
+    return "light" if _is_light else "dark"
 FONT = "Microsoft YaHei UI"
 CONF_CHIP = {
     "高": ("🟢 高置信度", "green"),
@@ -169,6 +171,52 @@ def _hex2rgb(h: str):
     if len(h) != 6:
         return (0, 0, 0)
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+
+def _round_rect(canv, x1, y1, x2, y2, r, fill, outline="", width=1, tags=""):
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return canv.create_polygon(pts, smooth=True, splinesteps=24, fill=fill,
+                               outline=outline, width=width, tags=tags)
+
+
+class RoundCard(tk.Frame):
+    """圆角卡片容器：外层负责布局，Canvas 画圆角底，内容放进 self.body。"""
+
+    def __init__(self, master, radius=18, fill=None, pad=16, outline=""):
+        bg = master["bg"]
+        super().__init__(master, bg=bg, highlightthickness=0, bd=0)
+        self.radius, self.pad = radius, pad
+        self.fill = fill or UI["card"]
+        self.outline = outline
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0, height=60)
+        self.canvas.pack(fill="both", expand=True)
+        self.body = tk.Frame(self.canvas, bg=self.fill)
+        self._win = self.canvas.create_window(pad, pad, window=self.body, anchor="nw")
+        self.canvas.bind("<Configure>", self._on_cfg)
+        self.body.bind("<Configure>", self._on_body)
+
+    def _on_cfg(self, _ev=None):
+        w = max(self.canvas.winfo_width(), 10)
+        self.canvas.itemconfigure(self._win, width=max(10, w - self.pad * 2))
+        self._draw()
+
+    def _on_body(self, _ev=None):
+        h = self.body.winfo_reqheight() + self.pad * 2
+        if abs(self.canvas.winfo_reqheight() - h) > 2:
+            self.canvas.configure(height=h)
+        self._draw()
+
+    def _draw(self):
+        c = self.canvas
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 4 or h < 4:
+            return
+        c.delete("cardbg")
+        _round_rect(c, 1, 1, w - 1, h - 1, self.radius, self.fill,
+                    outline=self.outline, width=1, tags="cardbg")
+        c.tag_lower("cardbg")
 
 
 def _gradient(parent, height=2, c1=None, c2=None):
@@ -714,6 +762,21 @@ def format_answer(payload: dict) -> str:
 class Pill(tk.Canvas):
     """Canvas 手绘的圆角按钮，带 hover / 按下 / 禁用。"""
 
+    LIGHT_KINDS = {
+        "primary": ("#ffffff", "#3b82f6", "#2f6fe0"),
+        "ghost": ("#374151", "#eef1f7", "#e3e9f3"),
+        "success": ("#ffffff", "#16a34a", "#128a3f"),
+        "danger": ("#ffffff", "#dc2626", "#c11f1f"),
+        "flat": ("#6b7280", "#f4f7fb", "#e9eef6"),
+        "tab": ("#1d4ed8", "#e6efff", "#d8e6ff"),
+        "tab_off": ("#6b7280", "#ffffff", "#f1f4f9"),
+    }
+
+    @classmethod
+    def colors(cls, kind):
+        table = cls.LIGHT_KINDS if UI.get("light") else cls.KINDS
+        return table.get(kind, table["ghost"])
+
     KINDS = {
         "primary": ("#4d9dff", "#07121f", "#71b4ff"),
         "ghost": ("#1b222c", "#c9d4e0", "#242d3b"),
@@ -728,10 +791,13 @@ class Pill(tk.Canvas):
                  padx=16, radius=11, font_size=10, bold=False, width=None,
                  bg=None):
         self._c_bg = bg or master["bg"]
-        fg, fill, hover = self.KINDS.get(kind, self.KINDS["ghost"])
-        if kind == "primary":  # 跟随主题强调色（设置里可换）
+        fg, fill, hover = self.colors(kind)
+        if kind == "primary" and not UI.get("light"):  # 深色下跟随主题强调色
             _acc = UI.get("accent", "#4d9dff")
             fg, fill, hover = _acc, UI.get("accent_bg", "#16233a"), _acc
+        elif kind == "primary":
+            _acc = UI.get("accent", "#3b82f6")
+            fg, fill, hover = "#ffffff", _acc, _acc
         self._pfont = tkfont.Font(family=FONT, size=font_size,
                                   weight="bold" if bold else "normal")
         w = width or (self._pfont.measure(text) + padx * 2)
@@ -773,7 +839,13 @@ class Pill(tk.Canvas):
         self.itemconfigure(self._label, text=text)
 
     def set_kind(self, kind):
-        fg, fill, hover = self.KINDS.get(kind, self.KINDS["ghost"])
+        fg, fill, hover = self.colors(kind)
+        if kind == "primary":
+            _acc = UI.get("accent", "#3b82f6")
+            if UI.get("light"):
+                fg, fill, hover = "#ffffff", _acc, _acc
+            else:
+                fg, fill, hover = _acc, UI.get("accent_bg", "#16233a"), _acc
         self._pfg, self._pfill, self._phover = fg, fill, hover
         self._paint(fill)
         self.itemconfigure(self._label, fill=fg)
@@ -1092,7 +1164,8 @@ class App:
 
         # ---- 标题行
         try:
-            self._banner_img = tk.PhotoImage(file=str(ROOT / "assets" / "banner.png"))
+            _bn = "banner-light.png" if UI.get("light") else "banner.png"
+            self._banner_img = tk.PhotoImage(file=str(ROOT / "assets" / _bn))
             bn = tk.Label(wrap, image=self._banner_img, bg=UI["bg"], bd=0)
             bn.pack(fill="x", pady=(0, 6))
         except Exception:  # noqa: BLE001
@@ -1126,13 +1199,13 @@ class App:
         self.grad.pack(fill="x", pady=(9, 0))
 
         # ---- 答案卡
-        card = tk.Frame(wrap, bg=UI["card"], highlightthickness=0, bd=0)
-        card.pack(fill="x", pady=(12, 12))
+        card = RoundCard(wrap, radius=20, fill=UI["card"], pad=18)
+        card.pack(fill="x", pady=(4, 14))
         # 左侧 3px 色条：随置信度变色，一眼看出这题靠不靠谱
-        self.edge = tk.Frame(card, bg=UI["accent"], width=3)
+        self.edge = tk.Frame(card.body, bg=UI["accent"], width=3)
         self.edge.pack(side="left", fill="y")
-        inner = tk.Frame(card, bg=UI["card"])
-        inner.pack(side="left", fill="both", expand=True, padx=(18, 16), pady=17)
+        inner = tk.Frame(card.body, bg=UI["card"])
+        inner.pack(side="left", fill="both", expand=True, padx=(14, 0))
         self.ans = tk.Label(inner, text="按 Ctrl+Alt+Q 圈住题目", bg=UI["card"],
                             fg=UI["dim"],
                             font=(FONT, max(12, round(23 * self.font_scale)), "bold"),
@@ -1193,23 +1266,22 @@ class App:
         self.chk_hint.pack(side="left", padx=(8, 0))
 
         # ---- 题面 / 翻译条（默认收起，点「题面」展开；可改字重算）
-        self.ex = tk.Frame(wrap, bg=UI["card2"], highlightbackground=UI["border"],
-                           highlightthickness=1)
-        ex_head = tk.Frame(self.ex, bg=UI["card2"])
+        self.ex = RoundCard(wrap, radius=16, fill=UI["card"], pad=12)
+        ex_head = tk.Frame(self.ex.body, bg=UI["card"])
         ex_head.pack(fill="x", padx=12, pady=(8, 0))
         tk.Label(ex_head, text="\u25ae \u9898\u9762\uff08\u53ef\u6539\uff09", bg=UI["card2"],
                  fg=UI["dim"], font=(FONT, 9, "bold")).pack(side="left")
         self.b_recalc = Pill(ex_head, prompts.LBL_RECALC, self.recalc_from_excerpt,
                              kind="primary", width=88, height=26, font_size=9)
         self.b_recalc.pack(side="right", padx=(6, 0))
-        self.ex_text = tk.Text(self.ex, wrap="word", bg=UI["card2"], fg=UI["text"],
+        self.ex_text = tk.Text(self.ex.body, wrap="word", bg=UI["card"], fg=UI["text"],
                                insertbackground=UI["text"], relief="flat", bd=0,
                                highlightthickness=0, height=3,
                                font=(FONT, max(8, round(int(self.cfg.get("font_size", 11))
                                                         * self.font_scale) - 1)),
                                padx=12, pady=6)
         self.ex_text.pack(fill="x", padx=2)
-        self.tr_label = tk.Label(self.ex, text="", bg=UI["card2"], fg=UI["accent"],
+        self.tr_label = tk.Label(self.ex.body, text="", bg=UI["card"], fg=UI["accent"],
                                  justify="left", anchor="w", wraplength=430,
                                  font=(FONT, max(8, round(int(self.cfg.get("font_size", 11))
                                                           * self.font_scale) - 1)),
@@ -1218,25 +1290,24 @@ class App:
         self.ex_visible = False
 
         # ---- 详情
-        det = tk.Frame(wrap, bg=UI["card2"], highlightbackground=UI["border"],
-                       highlightthickness=1)
+        det = RoundCard(wrap, radius=18, fill=UI["card2"], pad=10)
         det.pack(fill="both", expand=True)
         self.det = det
-        cap = tk.Frame(det, bg=UI["card2"])
+        cap = tk.Frame(det.body, bg=UI["card2"])
         cap.pack(side="top", fill="x", padx=14, pady=(9, 0))
         tk.Label(cap, text="\u25ae \u7ed3\u679c\u4e0e\u63a8\u7406", bg=UI["card2"],
                  fg=UI["dim"], font=(FONT, 9, "bold")).pack(side="left")
         self.b_ex = Pill(cap, prompts.LBL_EXCERPT, self.toggle_excerpt,
                          kind="flat", width=44, height=22, font_size=9)
         self.b_ex.pack(side="right")
-        self.text = tk.Text(det, wrap="word", bg=UI["card2"], fg=UI["text"],
+        self.text = tk.Text(det.body, wrap="word", bg=UI["card2"], fg=UI["text"],
                             insertbackground=UI["text"], relief="flat", bd=0,
                             highlightthickness=0, cursor="arrow",
                             height=5 if self.cfg.get("compact") else 8,
                             font=(FONT, max(8, round(int(self.cfg.get("font_size", 11))
                                                      * self.font_scale))),
                             padx=14, pady=12, spacing1=2, spacing3=3)
-        sb = tk.Scrollbar(det, command=self.text.yview, width=9, bg=UI["card2"],
+        sb = tk.Scrollbar(det.body, command=self.text.yview, width=9, bg=UI["card2"],
                           troughcolor=UI["card2"], activebackground=UI["border"],
                           relief="flat", bd=0, highlightthickness=0)
         self.text.configure(yscrollcommand=sb.set)
@@ -1253,10 +1324,9 @@ class App:
         self.text.bind("<Key>", self._block_keys)
 
         # ---- 操作（包在一张卡片里，视觉上成组）
-        controls = tk.Frame(wrap, bg=UI["card"], highlightthickness=0, bd=0)
-        controls.pack(fill="x", pady=(4, 12), before=det)
-        cpad = tk.Frame(controls, bg=UI["card"])
-        cpad.pack(fill="x", padx=10, pady=10)
+        controls = RoundCard(wrap, radius=20, fill=UI["card"], pad=14)
+        controls.pack(fill="x", pady=(0, 12), before=det)
+        cpad = controls.body
         # ---- 分组标签：作答 / 工具 / 记录（一页只显示一组，窗口更清爽）
         tabs = tk.Frame(cpad, bg=UI["card"])
         tabs.pack(fill="x", pady=(0, 8))
@@ -1552,7 +1622,8 @@ class App:
 
     def _flash(self, color: str):
         try:
-            self.card.configure(highlightbackground=color)
+            self.card.outline = color
+            self.card._draw()
             self.root.after(420, lambda: self.card.configure(
                 highlightbackground=UI["border"]))
         except Exception:  # noqa: BLE001
@@ -3895,6 +3966,8 @@ class App:
 
         row7 = tk.Frame(frm, bg=bg)
         row7.grid(row=10, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        row8 = tk.Frame(frm, bg=bg)
+        row8.grid(row=11, column=0, columnspan=2, sticky="w", pady=(6, 0))
         Pill(row7, prompts.LBL_WARMUP, self.warmup, kind="flat", height=26,
              padx=12, font_size=9).pack(side="left", padx=(0, 6))
         Pill(row7, prompts.L("update"), do_update, kind="flat", height=26,
@@ -3911,19 +3984,17 @@ class App:
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, prompts.L("queue"), self.retry_queue, kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
-        Pill(row7, "\u4e91\u7aef", self.open_cloud_dialog, kind="ghost", width=58,
-             height=30).pack(side="left", padx=(0, 8))
-        Pill(row7, "\u7b49\u5f85", self.retry_queue, kind="ghost", width=58,
-             height=30).pack_forget()
-        Pill(row7, prompts.LBL_LEDGER, self.open_ledger, kind="flat",
-             height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row8, "云端", self.open_cloud_dialog, kind="flat", height=26,
+             padx=12, font_size=9, bg=bg).pack(side="left", padx=(0, 6))
+        Pill(row8, prompts.LBL_LEDGER, self.open_ledger, kind="flat",
+             height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(6, 0))
 
         msg = tk.Label(frm, text="Key 获取：platform.deepseek.com → API keys",
                        bg=bg, fg=UI["muted"], font=(FONT, 9))
-        msg.grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        msg.grid(row=12, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         btns = tk.Frame(frm, bg=bg)
-        btns.grid(row=12, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        btns.grid(row=13, column=0, columnspan=2, sticky="e", pady=(14, 0))
 
         def save():
             self.cfg["api_key"] = vars_["api_key"].get().strip()

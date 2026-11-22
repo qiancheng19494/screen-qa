@@ -1,54 +1,48 @@
-"""生成主窗顶部横幅（纯 PIL，无外部素材）。v2.19：更克制的设计——左圆点标记 + 字标 + 右侧版本胶囊。"""
+"""生成主窗顶部横幅：assets/banner.png（深色）与 assets/banner-light.png（浅色）。"""
 import pathlib
-
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / "assets" / "banner.png"
+OUT = ROOT / "assets"
 W, H = 458, 46
-FONT_B = r"C:\Windows\Fonts\msyhbd.ttc"
-FONT_R = r"C:\Windows\Fonts\msyh.ttc"
+FB = r"C:\Windows\Fonts\msyhbd.ttc"
+FR = r"C:\Windows\Fonts\msyh.ttc"
 
 
-def lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+def render(dark: bool) -> Image.Image:
+    bg = "#0d1117" if dark else "#ffffff"
+    fg = "#eaf1ff" if dark else "#111827"
+    sub = "#7f8ea3" if dark else "#8b95a7"
+    acc = "#4d9dff" if dark else "#3b82f6"
+    acc_bg = "#16233a" if dark else "#e6efff"
+    hair = "#1f2733" if dark else "#e3e9f2"
+    img = Image.new("RGB", (W, H), bg)
+    d = ImageDraw.Draw(img)
+    try:
+        f1 = ImageFont.truetype(FB, 15)
+        f2 = ImageFont.truetype(FR, 9)
+        f3 = ImageFont.truetype(FR, 8)
+    except Exception:
+        f1 = f2 = f3 = ImageFont.load_default()
+    # 左侧取景框标记
+    d.rounded_rectangle([12, 12, 34, 34], radius=6, outline=acc, width=2)
+    d.rounded_rectangle([17, 17, 29, 29], radius=2, fill=acc)
+    d.text((42, 9), "屏幕问答", font=f1, fill=fg)
+    d.text((42, 28), "截屏 · 读题 · 作答", font=f3, fill=sub)
+    # 右侧版本胶囊
+    label = "v2.20"
+    tw = d.textlength(label, font=f2)
+    d.rounded_rectangle([W - 26 - tw - 12, 15, W - 14, 33], radius=9, fill=acc_bg)
+    d.text((W - 26 - tw - 6, 18), label, font=f2, fill=acc)
+    d.line([(0, H - 1), (W, H - 1)], fill=hair)
+    return img
 
 
 def main() -> int:
-    img = Image.new("RGB", (W, H), "#0d1117")
-    d = ImageDraw.Draw(img)
-    # 左上角极淡的光晕，避免整条死黑
-    for y in range(H):
-        for x in range(0, W, 2):
-            k = max(0.0, 1 - (x / (W * 0.5)) ** 2 - (y / (H * 0.9)) ** 2)
-            if k <= 0:
-                continue
-            base = (0x18, 0x1f, 0x2a)
-            c = lerp((0x0d, 0x11, 0x17), base, min(1.0, k * 0.9))
-            d.point((x, y), fill=c)
-            d.point((x + 1, y), fill=c)
-    try:
-        fb = ImageFont.truetype(FONT_B, 16)
-        fr = ImageFont.truetype(FONT_R, 9)
-    except Exception:  # noqa: BLE001
-        fb = fr = ImageFont.load_default()
-
-    # 标记：圆点 + 方框，暗示"取景框"
-    d.rounded_rectangle([16, 14, 34, 32], radius=5, outline="#4d9dff", width=2)
-    d.ellipse([22, 20, 28, 26], fill="#4d9dff")
-    d.text((42, 9), "屏幕问答", font=fb, fill="#e6edf3")
-    d.text((42, 28), "截屏 · 读题 · 作答", font=fr, fill="#6e7781")
-
-    # 右侧版本胶囊
-    ver = "v2.19"
-    tw = fr.getlength(ver)
-    d.rounded_rectangle([W - 16 - tw - 16, 13, W - 16, 33], radius=10, fill="#17263d")
-    d.text((W - 16 - tw - 8, 18), ver, font=fr, fill="#4d9dff")
-    # 底部分隔线
-    d.line([(0, H - 1), (W, H - 1)], fill="#1f2733")
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    img.save(OUT)
-    print("saved", OUT, img.size)
+    OUT.mkdir(parents=True, exist_ok=True)
+    render(True).save(OUT / "banner.png")
+    render(False).save(OUT / "banner-light.png")
+    print("saved banner.png / banner-light.png", (W, H))
     return 0
 
 

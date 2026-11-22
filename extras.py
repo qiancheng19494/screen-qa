@@ -111,7 +111,7 @@ def set_autostart(enable: bool) -> bool:
 
 
 # ----------------------------------------------------------------- 版本检查
-LOCAL_VERSION = "2.14"
+LOCAL_VERSION = "2.20"
 
 
 def check_update(timeout: float = 8.0) -> dict:
