@@ -1377,18 +1377,20 @@ class App:
                            kind="ghost", width=56)
         self.b_open.pack(side="left", padx=(7, 0))
 
-        self.b_steps = Pill(bar3, prompts.L("steps"), self.copy_steps,
-                            kind="ghost", width=54)
-        self.b_steps.pack(side="right", padx=(7, 0))
-        self.b_steps.set_enabled(False)
-        self.b_bad = Pill(bar3, prompts.L("bad"), self.mark_error,
-                          kind="ghost", width=54)
-        self.b_bad.pack(side="right", padx=(7, 0))
-        self.b_bad.set_enabled(False)
+        # 「步骤 / 错了」放到第四行左侧，避免第三行（7 个按钮）溢出
+        _bar4_placeholder = None
 
         # 第四行：判卷 / 练一练 / 导出卡片 / 重复上次区域
         bar4 = tk.Frame(self.pages["\u5de5\u5177"], bg=UI["card"])
         bar4.pack(fill="x", pady=(8, 0))
+        self.b_steps = Pill(bar4, prompts.L("steps"), self.copy_steps,
+                            kind="ghost", width=52)
+        self.b_steps.pack(side="left", padx=(0, 7))
+        self.b_steps.set_enabled(False)
+        self.b_bad = Pill(bar4, prompts.L("bad"), self.mark_error,
+                          kind="ghost", width=52)
+        self.b_bad.pack(side="left", padx=(0, 7))
+        self.b_bad.set_enabled(False)
         self.b_judge = Pill(bar4, prompts.JUDGE_LABEL, self.judge_answer,
                             kind="ghost", width=64)
         self.b_judge.pack(side="left")
@@ -1401,17 +1403,19 @@ class App:
                            kind="ghost", width=58)
         self.b_card.pack(side="left", padx=(7, 0))
         self.b_card.set_enabled(False)
-        self.b_latex = Pill(bar4, prompts.LATEX_LABEL, self.copy_latex,
+        bar5 = tk.Frame(self.pages["\u5de5\u5177"], bg=UI["card"])
+        bar5.pack(fill="x", pady=(8, 0))
+        self.b_latex = Pill(bar5, prompts.LATEX_LABEL, self.copy_latex,
                             kind="ghost", width=74)
-        self.b_latex.pack(side="left", padx=(7, 0))
+        self.b_latex.pack(side="left")
         self.b_latex.set_enabled(False)
-        self.b_alt = Pill(bar4, prompts.ALT_LABEL, self.alt_method,
+        self.b_alt = Pill(bar5, prompts.ALT_LABEL, self.alt_method,
                           kind="ghost", width=62)
         self.b_alt.pack(side="left", padx=(7, 0))
         self.b_alt.set_enabled(False)
-        self.b_repeat = Pill(bar4, prompts.REPEAT_LABEL, self.repeat_region,
+        self.b_repeat = Pill(bar5, prompts.REPEAT_LABEL, self.repeat_region,
                              kind="ghost", width=76)
-        self.b_repeat.pack(side="right")
+        self.b_repeat.pack(side="left", padx=(7, 0))
 
         # 一屏多题时，这里会冒出「复制第 N 题」按钮；空的时候不占高度
         self.multi_bar = tk.Frame(wrap, bg=bg)
