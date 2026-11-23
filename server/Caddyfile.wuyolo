@@ -1,0 +1,30 @@
+# wuyolo.com 站点结构：根域 = 个人主页（静态），q 子域 = 答题网页（反代）
+# 用法：cp Caddyfile.wuyolo /etc/caddy/Caddyfile && systemctl reload caddy
+# 前提：三条 DNS 都指向本机公网 IP（见 deploy-site.md）
+
+# ① 个人主页（静态文件）
+wuyolo.com {
+	encode gzip
+	root * /srv/home
+	try_files {path} {path}.html /index.html
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
+
+# ② www 跳到裸域（只保留一个规范地址）
+www.wuyolo.com {
+	redir https://wuyolo.com{uri} permanent
+}
+
+# ③ 答题网页（Python 服务，只监听 127.0.0.1:8080）
+#    前端用的是绝对路径 /api/...，所以必须给独立子域，不能挂在 /sqa 子路径下
+q.wuyolo.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080 {
+		# 流式（SSE）必须关掉缓冲，否则答案会"一次性蹦出来"
+		flush_interval -1
+	}
+}
