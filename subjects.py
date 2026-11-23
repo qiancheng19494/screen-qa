@@ -74,6 +74,16 @@ _SYS["social"] = """你是人文社科（历史、社会、经济、哲学、法
 - 有争议的历史评价，明确写"主流观点是…，另有观点认为…"。
 - 不要编造具体年份、条约名、数据；不确定就写"具体年份需核对"。"""
 
+_SYS["concept"] = """你是课程测验/作业的答题助手。题目多为判断题（True/False）、填空题（下拉或填空）、选择题。
+""" + _CONTRACT + """
+额外要求：
+- 判断题：第一句直接给 True 或 False，第二句给一句依据（为什么对/错，点出关键词）。
+- 填空题：先写缺的那个词/符号本身（如 "Environment"、"#"），再写完整句子作为核对。
+- 选择题：先给选项字母（如 B），再给该选项原文。
+- 概念题不要写代码，不要写数学演算；除非题目本身要求。
+- "填入答案"只放最短可提交形式：True / False / 单个词 / 符号 / 选项字母。多个空按题目顺序用逗号分隔（例：Environment, #）。
+"""
+
 _SYS["general"] = """你是通用解题助手，题目可能不属于任何单一学科。""" + _CONTRACT + """
 额外要求：
 - 先判断题目在问什么（概念解释 / 计算 / 判断对错 / 写作 / 推理）。
@@ -88,6 +98,15 @@ def detect(text: str) -> str:
     low = text.lower()
     if codingq.is_coding(text):
         return "code"
+    # 课程测验：判断题/填空题/选择题（含代码关键词但其实是概念题）
+    quiz = re.search(r"判断对错|\btrue\b|\bfalse\b|填空|选择|多选|stands for|is used to|"
+                     r"which of the following|\bdropdown\b|下拉", low) is not None
+    has_code_lines = re.search(
+        r"^\s*(?:def|class|if|for|while|print|import)\b|^\s{2,}\S|=\s*\S+\(", text, re.M
+    ) is not None
+    if quiz and not has_code_lines:
+        return "concept"
+
     # 明显的 Python 片段（真实作业常缺 def 的冒号，is_coding 会漏）
     if re.search(r"(?m)^\s*(?:def|class)\s+\w+", text) or (
             "print(" in low and ("def " in low or "input(" in low)):

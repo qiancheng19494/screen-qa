@@ -89,7 +89,9 @@ DEFAULTS = {
     "hotkey_next": "ctrl+alt+n",  # 下一题（一屏多题时切到下一题的答案）
     "dual": False,              # 双模型互检：chat 投票 + R1 独立解，一致才算高
     "vision_first": False,      # 几何图模式：直接用视觉模型读整图（不做本地 OCR 短路）
-    "theme": "light",            # dark / light（改完重新打开窗口生效）
+    "theme": "light",
+    "vision_provider": "",
+    "vision_key": "",            # dark / light（改完重新打开窗口生效）
     "font_scale": 100,          # 详情区字号百分比 80~160
     "opacity": 100,             # 窗口不透明度 60~100
     "remember_pos": False,      # 记住窗口最后的位置

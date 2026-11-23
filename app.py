@@ -4171,7 +4171,7 @@ class App:
         except Exception:  # noqa: BLE001
             pass
         try:
-            self.root.after(700, self._clip_tick)
+            self.root.after(400, self._clip_tick)
         except Exception:  # noqa: BLE001
             pass
 
@@ -4458,6 +4458,18 @@ class App:
             except Exception:  # noqa: BLE001
                 pass
         self.root.destroy()
+
+
+def warm_ocr():
+    """后台预热 OCR / 视觉后端，减少第一题的等待。"""
+    try:
+        import ocr_rapid
+        if getattr(ocr_rapid, "warmup", None):
+            ocr_rapid.warmup()
+        else:
+            ocr_rapid.recognize(str(ROOT / "assets" / "icon-64.png"))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def main():

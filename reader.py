@@ -124,6 +124,9 @@ def read_with_modlens(image_path: str, timeout_s: int = 300,
         res.error = "视觉链路在本进程里已判定不可用（前面失败过），本次跳过"
         return res
     cmd = _modlens_cmd()
+    _prov = provider or os.environ.get("SQA_VISION_PROVIDER", "")
+    if _prov and cmd:
+        cmd = list(cmd) + ["-p", _prov]
     if not cmd:
         res.error = "找不到 modlens（需要 node 或 npx，以及 @liustack/modlens）"
         _mark_modlens_dead(res.error)
