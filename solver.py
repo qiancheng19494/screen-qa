@@ -126,7 +126,7 @@ def extract_fill(text: str) -> str:
     if raw in ("", "无", "—", "-", "不适用", "N/A"):
         return ""
     # 空段后面紧跟下一个标题时，正则会把标题吞进来（如 "## LaTeX"）
-    if raw.startswith("#") or _SECTION_WORD.match(raw):
+    if _SECTION_WORD.match(raw):
         return ""
     # 去掉模型偶尔加的前缀
     raw = re.sub(r"^填入(答案)?[：:]\s*", "", raw)

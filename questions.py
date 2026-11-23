@@ -26,6 +26,12 @@ def _is_option(line: str) -> bool:
     return bool(_OPT_RE.match(line))
 
 
+_QUIZ_NUM = re.compile(
+    r"^\s*(\d{1,2})\s+(?=(?:填空|判断|选择|多选|简答|单答|问答|计算|编程|"
+    r"Fill|Choose|True|False|Multiple|Short|Essay))"
+)
+
+
 def split_questions(text: str) -> list[str]:
     """返回切好的题目列表；切不出来返回 []。"""
     if not text or len(text.strip()) < 40:
@@ -34,7 +40,7 @@ def split_questions(text: str) -> list[str]:
     lines = [ln.rstrip() for ln in text.splitlines()]
     marks: list[tuple[int, int]] = []          # (行号, 编号)
     for i, ln in enumerate(lines):
-        m = _NUM_RE.match(ln)
+        m = _NUM_RE.match(ln) or _QUIZ_NUM.match(ln)
         if not m:
             continue
         if _is_option(ln):
