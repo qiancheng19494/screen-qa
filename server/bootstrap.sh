@@ -63,7 +63,24 @@ cp -f "$DIR/server/home/index.html" "$HOME_DIR/index.html"
 chown -R www-data:www-data "$HOME_DIR" 2>/dev/null || true
 
 log "7/7 配置 Caddy 并 reload"
-cp -f "$DIR/server/Caddyfile.wuyolo" /etc/caddy/Caddyfile
+# 自动判断根域是否指向本机：是→主页也放这台机器；否（例如已在 GitHub Pages）→ 只配 q 子域
+MYIP=$(curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
+ROOTIP=$(getent ahostsv4 wuyolo.com 2>/dev/null | awk '{print $1}' | head -1)
+echo "本机公网 IP: ${MYIP:-未知} / wuyolo.com 当前指向: ${ROOTIP:-未解析}"
+if [ -n "$MYIP" ] && [ "$ROOTIP" = "$MYIP" ]; then
+  cp -f "$DIR/server/Caddyfile.wuyolo" /etc/caddy/Caddyfile
+  echo "→ 根域指向本机，启用 wuyolo.com 静态主页 + q 子域"
+else
+  cat > /etc/caddy/Caddyfile <<'CADDY'
+q.wuyolo.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+	}
+}
+CADDY
+  echo "→ 根域不指向本机（如 GitHub Pages），这里只启用 q.wuyolo.com"
+fi
 caddy validate --config /etc/caddy/Caddyfile >/dev/null
 systemctl enable --now caddy >/dev/null 2>&1
 systemctl reload caddy 2>/dev/null || systemctl restart caddy
