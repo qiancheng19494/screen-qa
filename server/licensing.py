@@ -169,8 +169,15 @@ def _unb64(text: str) -> bytes:
 
 
 def issue_ticket(key: str, machine: str, expires_at: float) -> str:
+    """RS256 ticket if the private key exists, else legacy HMAC."""
     payload = {"k": key, "m": machine, "e": float(expires_at or 0), "i": time.time()}
     body = _b64(json.dumps(payload, separators=(",", ":")).encode())
+    try:
+        import licsig
+        if licsig.available():
+            return body + "." + licsig.sign(body.encode())
+    except Exception:
+        pass
     sig = _b64(hmac.new(secret(), body.encode(), hashlib.sha256).digest())
     return body + "." + sig
 
@@ -207,5 +214,44 @@ def revoke(key: str) -> bool:
         cur = con.execute("update licenses set status = 'revoked' where key = ?", (key.strip().upper(),))
         con.commit()
         return cur.rowcount > 0
+    finally:
+        con.close()
+
+def rebind(key: str, machine: str = "", ip: str = "") -> dict:
+    """Move a key to another machine (clears the binding). Returns status."""
+    key = (key or "").strip().upper()
+    con = store.connect()
+    try:
+        row = con.execute("select * from licenses where key = ?", (key,)).fetchone()
+        if not row:
+            return {"ok": False, "error": "unknown key"}
+        con.execute("update licenses set machine = ?, activated_at = null, "
+                    "status = 'new' where key = ?", ((machine or "").strip().upper(), key))
+        con.execute("insert into license_events(key, ts, action, machine, ip, detail) "
+                    "values (?, ?, 'rebind', ?, ?, ?)",
+                    (key, time.time(), (machine or "").strip().upper(), ip, "rebind by admin"))
+        con.commit()
+        return {"ok": True, "key": key, "machine": (machine or "").strip().upper()}
+    finally:
+        con.close()
+
+
+def extend(key: str, days: int = 30, ip: str = "") -> dict:
+    """Push the expiry date forward by `days` (from now or current expiry)."""
+    key = (key or "").strip().upper()
+    con = store.connect()
+    try:
+        row = con.execute("select * from licenses where key = ?", (key,)).fetchone()
+        if not row:
+            return {"ok": False, "error": "unknown key"}
+        base = float(row["expires_at"] or 0) or time.time()
+        exp = max(base, time.time()) + max(1, int(days)) * 86400
+        con.execute("update licenses set expires_at = ? where key = ?", (exp, key))
+        con.execute("insert into license_events(key, ts, action, machine, ip, detail) "
+                    "values (?, ?, 'extend', ?, ?, ?)",
+                    (key, time.time(), row["machine"] or "", ip, "+%d days" % int(days)))
+        con.commit()
+        return {"ok": True, "key": key, "expires_at": exp,
+                "days_left": int((exp - time.time()) // 86400)}
     finally:
         con.close()

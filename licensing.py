@@ -7,6 +7,10 @@
 from __future__ import annotations
 
 import base64
+try:
+    import licpub
+except Exception:  # noqa: BLE001
+    licpub = None
 import ctypes
 import hashlib
 import json
@@ -130,6 +134,13 @@ def status(server: str = "") -> dict:
         st["trial_start"] = now
     # 已激活：优先用服务器心跳，失败时走本地宽限
     if st.get("key") and st.get("machine") == machine:
+        tk = st.get("ticket") or ""
+        if tk and licpub is not None:
+            vr = licpub.verify_ticket(tk, machine)
+            if not vr.get("ok"):
+                return {"ok": False, "reason": vr.get("error") or "ticket invalid",
+                        "machine": machine, "state": st, "days_left": 0}
+            st["exp"] = vr.get("expires_at") or st.get("exp")
         exp = float(st.get("exp") or 0)
         last_ok = float(st.get("last_ok") or 0)
         if exp and exp < now:
@@ -163,7 +174,8 @@ def activate(server: str, key: str) -> dict:
     if not res.get("ok"):
         return {"ok": False, "error": res.get("error") or "activate failed"}
     st = load_state()
-    st.update({"key": key.strip().upper(), "machine": machine,
+    st.update({"ticket": res.get("ticket") or "",
+               "key": key.strip().upper(), "machine": machine,
                "exp": float(res.get("expires_at") or 0), "last_ok": time.time(),
                "server": (server or DEFAULT_SERVER).rstrip("/")})
     save_state(st)

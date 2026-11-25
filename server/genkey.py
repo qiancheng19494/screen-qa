@@ -13,7 +13,7 @@ import licensing
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["new", "list", "revoke"])
+    ap.add_argument("cmd", choices=["new", "list", "revoke", "rebind", "extend"])
     ap.add_argument("key", nargs="?")
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--note", default="")
@@ -34,6 +34,18 @@ def main() -> int:
         for r in rows:
             exp = time.strftime("%Y-%m-%d", time.localtime(float(r["expires_at"] or 0))) if r["expires_at"] else "-"
             print(f"{r['key']:22s} {r['status']:8s} {(r['machine'] or '-')[:22]:22s} {exp:11s} {r['note']}")
+    elif a.cmd == "rebind":
+        if not a.key:
+            print("need key")
+            return 2
+        r = licensing.rebind(a.key, a.machine)
+        print(r)
+    elif a.cmd == "extend":
+        if not a.key:
+            print("need key")
+            return 2
+        r = licensing.extend(a.key, a.days)
+        print(r)
     else:
         if not a.key:
             print("need key")
