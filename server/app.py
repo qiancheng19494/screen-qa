@@ -466,41 +466,83 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _solve_stream(self, text: str, model: str, u) -> None:
+        """SSE 流式作答：先发心跳，再尝试真流式；首帧超时则回退非流式并伪流式下发。"""
         import json as _json
+        import threading
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
+
+        def raw_write(payload: dict) -> bool:
+            try:
+                self.wfile.write(("data: " + _json.dumps(payload, ensure_ascii=False) + "\n\n").encode())
+                self.wfile.flush()
+                return True
+            except Exception:  # noqa: BLE001
+                return False
+
+        # 心跳：让浏览器/Caddy 立刻见到字节，避免"连上了但一直空"
+        try:
+            self.wfile.write(b": ok\n\n")
+            self.wfile.flush()
+        except Exception:  # noqa: BLE001
+            return
+
+        state = {"first": 0.0, "abandon": False}
         buf = []
 
         def cb(ch: str) -> None:
+            if state["abandon"]:
+                return
+            state["first"] = state["first"] or time.time()
             buf.append(ch)
-            try:
-                self.wfile.write(("data: " + _json.dumps({"delta": ch}, ensure_ascii=False) + "\n\n").encode())
-                self.wfile.flush()
-            except Exception:  # noqa: BLE001
-                pass
+            raw_write({"delta": ch})
 
-        try:
-            out = upstream_chat({"model": model, "temperature": 0.2, "max_tokens": 1200,
-                                 "messages": [{"role": "system", "content": SYSTEM},
-                                              {"role": "user", "content": text[:6000]}]}, stream_cb=cb)
-        except Exception as exc:  # noqa: BLE001
-            self.wfile.write(("data: " + _json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False) + "\n\n").encode())
-            self.wfile.flush()
-            return
-        content = out.get("content") or "".join(buf)
+        payload = {"model": model, "temperature": 0.2, "max_tokens": 1200,
+                   "messages": [{"role": "system", "content": SYSTEM},
+                                {"role": "user", "content": text[:6000]}]}
+        box: dict = {}
+
+        def work() -> None:
+            try:
+                box["out"] = upstream_chat(payload, stream_cb=cb)
+            except Exception as exc:  # noqa: BLE001
+                box["err"] = exc
+
+        th = threading.Thread(target=work, daemon=True)
+        th.start()
+        th.join(25)
+        content, usage = "", {}
+        if th.is_alive() or "err" in box or not state["first"]:
+            # 回退：非流式（这条路径在 mock 与真实上游都验证过能返回）
+            state["abandon"] = True
+            try:
+                out = upstream_chat(dict(payload))
+            except Exception as exc:  # noqa: BLE001
+                raw_write({"error": f"{type(exc).__name__}: {exc}"})
+                return
+            content = out.get("content") or ""
+            usage = out.get("usage") or {}
+            step = 24
+            for i in range(0, len(content), step):
+                raw_write({"delta": content[i:i + step]})
+                time.sleep(0.015)
+        else:
+            out = box.get("out") or {}
+            content = out.get("content") or "".join(buf)
+            usage = out.get("usage") or {}
         answer, fill = self._parse(content)
-        usage = out.get("usage") or {}
         pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
         if u:
-            store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
-            self._save_record(u, text, answer, fill, model, pt, ct)
-        done = _json.dumps({"done": True, "answer": answer, "fill": fill,
-                            "usage": usage, "cost": round(_cost(pt, ct), 6)}, ensure_ascii=False)
-        self.wfile.write(("data: " + done + "\n\n").encode())
-        self.wfile.flush()
+            try:
+                store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
+                self._save_record(u, text, answer, fill, model, pt, ct)
+            except Exception:  # noqa: BLE001
+                pass
+        raw_write({"done": True, "answer": answer, "fill": fill, "content": content,
+                   "usage": usage, "cost": _cost(pt, ct) if (pt or ct) else 0})
 
     def _solve_multi(self, text: str, model: str, u) -> None:
         import re as _re
