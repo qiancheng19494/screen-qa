@@ -52,12 +52,24 @@ fi
 
 mkdir -p /srv/home
 [ -f /srv/sqa/server/home/index.html ] && cp /srv/sqa/server/home/index.html /srv/home/index.html
+for f in favicon.ico robots.txt sitemap.xml manifest.webmanifest apple-touch-icon.png icon-180.png; do
+  [ -f "/srv/sqa/server/home/$f" ] && cp "/srv/sqa/server/home/$f" "/srv/home/$f"
+done
 
 cat > /etc/caddy/Caddyfile <<EOF
 # 个人主页（静态）
 $SITES {
     root * /srv/home
     encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:"
+        -Server
+    }
     file_server
     header /index.html Cache-Control "no-cache"
 }
@@ -65,6 +77,13 @@ $SITES {
 # 答题网页（反代到容器，关闭缓冲以支持流式）
 q.wuyolo.com {
     encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
     reverse_proxy 127.0.0.1:8080 {
         flush_interval -1
     }

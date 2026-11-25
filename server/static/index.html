@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>屏幕问答 · 网页版</title>
 <style>
   :root{--bg:#0a0c10;--card:#131820;--line:#232b38;--tx:#e9ecf2;--dim:#98a2b3;--ac:#4d9dff;--ok:#3ddc84}
@@ -57,6 +62,14 @@
     </div>
   </div>
 
+  <div class="card" id="statCard" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <b>我的用量</b><span class="sub" id="statMsg" style="margin:0"></span>
+    </div>
+    <div class="sub" id="statSum" style="margin:6px 0 0"></div>
+    <div id="statBars" style="display:flex;gap:3px;align-items:flex-end;height:64px;margin-top:10px"></div>
+    <div class="sub" id="statAxis" style="display:flex;justify-content:space-between;margin-top:2px"></div>
+  </div>
   <div class="card" id="outCard" style="display:none">
     <div class="ans" id="ans"></div>
     <div class="fill" id="fill"></div>
@@ -75,7 +88,7 @@ $("btnLogin").onclick = async () => {
   const r = await fetch("/api/login", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({name:$("name").value, password:$("pw").value})});
   const j = await r.json();
-  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token);
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats();
     $("authMsg").textContent = "已登录：" + j.user.name; }
   else $("authMsg").textContent = j.error || "登录失败";
 };
@@ -83,7 +96,7 @@ $("btnReg").onclick = async () => {
   const r = await fetch("/api/register", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({name:$("name").value, password:$("pw").value})});
   const j = await r.json();
-  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token);
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats();
     $("authMsg").textContent = "注册成功：" + j.user.name; }
   else $("authMsg").textContent = j.error || "注册失败";
 };
@@ -111,8 +124,22 @@ $("btnAsk").onclick = () => { const t = $("q").value.trim();
 $("file").onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
   $("msg").textContent = "上传识别中…";
-  const b64 = await new Promise(res => { const fr = new FileReader();
-    fr.onload = () => res(fr.result); fr.readAsDataURL(f); });
+  // 手机拍照常见 3-8MB，先压到长边 1600 + JPEG 0.85，上传快 3 倍且识别更准
+  const b64 = await (async () => {
+    try {
+      const img = await createImageBitmap(f);
+      const max = 1600, scale = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+      const cx = cv.getContext("2d");
+      cx.imageSmoothingQuality = "high";
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      return cv.toDataURL("image/jpeg", 0.85);
+    } catch (err) {
+      return await new Promise(res => { const fr = new FileReader();
+        fr.onload = () => res(fr.result); fr.readAsDataURL(f); });
+    }
+  })();
   const r = await fetch("/api/solve_image", {method:"POST",
     headers: Object.assign({"Content-Type":"application/json"}, H()),
     body: JSON.stringify({image_b64: b64})});
@@ -122,6 +149,33 @@ $("file").onchange = async (e) => {
   $("ans").textContent = j.answer || ""; $("fill").textContent = j.fill ? ("填入答案：" + j.fill) : "";
   $("why").textContent = j.reasoning || ""; $("msg").textContent = "识别完成";
 };
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
+async function loadStats() {
+  if (!token) return;
+  const r = await fetch("/api/stats", {headers: H()});
+  if (r.status === 401) { $("statMsg").textContent = "未登录"; return; }
+  const j = await r.json();
+  if (j.error) { $("statMsg").textContent = j.error; return; }
+  const s = j.summary || {}, daily = j.daily || [];
+  $("statCard").style.display = "block";
+  $("statMsg").textContent = "";
+  $("statSum").textContent = "今日 " + (s.today_n || 0) + " 题 · ¥" + Number(s.today_cost || 0).toFixed(4) +
+    " ／ 累计 " + (s.total_n || 0) + " 题 · ¥" + Number(s.total_cost || 0).toFixed(4);
+  const max = Math.max(0.0001, ...daily.map(d => d.cost));
+  $("statBars").innerHTML = daily.map(d => {
+    const hgt = Math.max(2, Math.round(60 * (d.cost / max)));
+    const today = d.date === new Date().toISOString().slice(0, 10);
+    return '<div title="' + d.date + ' · ¥' + d.cost.toFixed(4) + ' · ' + d.n + ' 题" style="flex:1;height:' +
+      hgt + 'px;background:' + (today ? "#3ddc84" : "#4d9dff") + ';border-radius:2px;opacity:' +
+      (today ? 1 : 0.65) + '"></div>';
+  }).join("");
+  $("statAxis").innerHTML = "<span>" + (daily[0] ? daily[0].date.slice(5) : "") + "</span><span>近 30 天花费</span><span>" +
+    (daily.length ? daily[daily.length - 1].date.slice(5) : "") + "</span>";
+}
+if (token) loadStats();
 </script>
 </body>
 </html>

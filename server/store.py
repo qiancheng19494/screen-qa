@@ -151,6 +151,19 @@ def stats(uid: int) -> dict:
     return {"total": dict(tot), "today": dict(day)}
 
 
+def daily_usage(uid: int, days: int = 30) -> list[dict]:
+    """\u6309\u5929\u6c47\u603b\u7528\u91cf\uff08\u6700\u8fd1 N \u5929\uff09\u3002"""
+    con = connect()
+    try:
+        rows = con.execute(
+            "select date(ts, 'unixepoch', 'localtime') as d, sum(cost) as cost, count(*) as n"
+            " from usage where user_id = ? group by d order by d desc limit ?",
+            (uid, days)).fetchall()
+        return [{"date": r["d"], "cost": round(float(r["cost"] or 0), 6), "n": int(r["n"])} for r in rows][::-1]
+    finally:
+        con.close()
+
+
 def push_records(uid: int, table: str, items: list[dict]) -> int:
     if table not in ("records", "errors"):
         raise ValueError("bad table")

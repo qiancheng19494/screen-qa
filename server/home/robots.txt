@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://wuyolo.com/sitemap.xml

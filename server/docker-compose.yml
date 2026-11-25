@@ -10,3 +10,9 @@ services:
       SQA_JWT_SECRET: ${SQA_JWT_SECRET:-请改成一串随机字符}
     volumes:
       - ./data:/app/data
+    logging:                      # 默认 json-file 无上限，会吃满磁盘
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+

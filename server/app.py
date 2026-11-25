@@ -18,6 +18,7 @@
     GET  /                                   -> 网页版
 """
 from __future__ import annotations
+from collections import defaultdict, deque
 
 import argparse
 import base64
@@ -42,6 +43,7 @@ ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 UPSTREAM_BASE = os.environ.get("UPSTREAM_BASE", "https://api.deepseek.com").rstrip("/")
 UPSTREAM_KEY = os.environ.get("UPSTREAM_KEY", "")
+_HITS: dict = defaultdict(deque)
 MOCK = os.environ.get("SQA_MOCK", "") not in ("", "0")
 SECRET_FILE = ROOT / "secret.key"
 MAX_BODY = 8 * 1024 * 1024
@@ -139,6 +141,30 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("请求体过大")
         return json.loads(self.rfile.read(n).decode("utf-8") or "{}")
 
+    # ---------- 限流 ----------
+    def _ip(self) -> str:
+        xff = self.headers.get("X-Forwarded-For") or self.headers.get("X-Real-IP") or ""
+        return (xff.split(",")[0].strip() or self.client_address[0])[:64]
+
+    def _limited(self, bucket: str, limit: int, window: float) -> bool:
+        now = time.time()
+        key = (bucket, self._ip())
+        q = _HITS[key]
+        while q and now - q[0] > window:
+            q.popleft()
+        if len(q) >= limit:
+            retry = int(window - (now - q[0])) + 1
+            body = json.dumps({"error": "too many requests, retry in %ds" % retry}).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Retry-After", str(retry))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+        q.append(now)
+        return False
+
     def _token(self) -> str:
         auth = self.headers.get("Authorization") or ""
         return auth[7:].strip() if auth.lower().startswith("bearer ") else ""
@@ -155,6 +181,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        if self._limited("get", 240, 60.0):
+            return
+        if path in ("/favicon.ico", "/manifest.webmanifest", "/sw.js", "/robots.txt",
+                    "/sitemap.xml", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"):
+            return self._static(path.lstrip("/"))
+        if path == "/api/stats":
+            u = self._user()
+            if not u:
+                return self._json({"error": "\u672a\u767b\u5f55"}, 401)
+            st = store.stats(int(u["id"]))
+            tot, tod = st.get("total", {}), st.get("today", {})
+            return self._json({"stats": st,
+                               "summary": {"total_n": tot.get("n", 0), "total_cost": tot.get("c", 0),
+                                           "today_n": tod.get("n", 0), "today_cost": tod.get("c", 0)},
+                               "daily": store.daily_usage(int(u["id"]), 30)})
         if path in ("/", "/index.html"):
             return self._static("index.html")
         if path.startswith("/static/"):
@@ -178,6 +219,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        limit, bucket = (12, "auth") if path in ("/api/login", "/api/register") else (60, "post")
+        if self._limited(bucket, limit, 60.0):
+            return
         try:
             if path == "/api/register":
                 b = self._body()
