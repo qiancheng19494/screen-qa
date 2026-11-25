@@ -886,10 +886,34 @@ def ensure_bundled_files() -> None:
         except Exception:  # noqa: BLE001
             pass
 
+def _license_block(cfg: dict) -> str:
+    """Offline license check (no network): ticket verify, else trial window."""
+    if not cfg.get("license_required"):
+        return ""
+    try:
+        import licensing as _lic
+        import licpub
+        st = _lic.load_state() or {}
+        machine = _lic.machine_code()
+        tk = st.get("ticket") or ""
+        if tk:
+            vr = licpub.verify_ticket(tk, machine)
+            if vr.get("ok"):
+                return ""
+            return "授权票据无效：%s（机器码 %s）" % (vr.get("error") or "?", machine)
+        first = float(st.get("first") or 0) or time.time()
+        left = int(_lic.TRIAL_DAYS - (time.time() - first) // 86400)
+        if left > 0:
+            return ""
+        return "试用已到期（机器码 %s）" % machine
+    except Exception as exc:  # noqa: BLE001
+        return "授权校验异常：%s" % exc
+
+
 def cli_main(args) -> int:
     ensure_bundled_files()
     try:
-        prompts.set_lang(config.load().get("lang", "zh"))
+        prompts.set_lang(cfg_mod.load().get("lang", "zh"))
     except Exception:  # noqa: BLE001
         pass
     # exe（--windowed）里 sys.stdout/stderr 是 None：改写日志文件，CLI 才不会崩
@@ -909,6 +933,12 @@ def cli_main(args) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except Exception:  # noqa: BLE001
             pass
+    _cfg0 = cfg_mod.load()
+    _block = _license_block(_cfg0)
+    if _block:
+        print("[X] " + _block)
+        print("   已激活的机器请把 license.json 放回程序目录；或到 ⚙ →「授权」重新激活。")
+        return 3
     cfg = cfg_mod.load()
     if args.image:
         path = args.image
@@ -1527,6 +1557,16 @@ class App:
 
     def _refresh_status_meta(self):
         bits = []
+        try:
+            if getattr(self, "_lic_days", None) is None:
+                import licensing as _licm
+                _st = _licm.load_state() or {}
+                _exp = float(_st.get("exp") or 0)
+                self._lic_days = int((_exp - time.time()) // 86400) if _exp else -1
+            if 0 <= self._lic_days <= 7:
+                bits.append("⚠ 授权剩 %d 天" % self._lic_days)
+        except Exception:  # noqa: BLE001
+            pass
         _has_bal = bool(getattr(self, "_balance_text", ""))
         if not _has_bal:
             try:
