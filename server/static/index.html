@@ -147,11 +147,11 @@ $("btnAsk").onclick = () => { const t = $("q").value.trim();
 $("file").onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
   $("msg").textContent = "上传识别中…";
-  // 手机拍照常见 3-8MB，先压到长边 1600 + JPEG 0.85，上传快 3 倍且识别更准
+  // 手机拍照常见 3-8MB，先压到长边 1200 + JPEG 0.85，上传快 3 倍且识别更准
   const b64 = await (async () => {
     try {
       const img = await createImageBitmap(f);
-      const max = 1600, scale = Math.min(1, max / Math.max(img.width, img.height));
+      const max = 1200, scale = Math.min(1, max / Math.max(img.width, img.height));
       const cv = document.createElement("canvas");
       cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
       const cx = cv.getContext("2d");
@@ -230,6 +230,144 @@ async function loadStats() {
     (daily.length ? daily[daily.length - 1].date.slice(5) : "") + "</span>";
 }
 if (token) loadStats(); loadHistory();
+</script>
+<style id="__webplus_css">
+  :root[data-theme="light"]{--bg:#f6f8fb;--fg:#111827;--card:#ffffff;--line:#e3e9f2;--sub:#5b6472;--accent:#2563eb}
+  #fabs{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;z-index:9}
+  #fabs button{width:auto;padding:8px 12px;border-radius:999px;background:var(--card);color:var(--fg);border:1px solid var(--line);font-size:13px;cursor:pointer}
+  .mini{padding:5px 10px;font-size:12px;border-radius:999px;background:transparent;border:1px solid var(--line);color:var(--sub);cursor:pointer;margin-left:8px}
+  .hitem .mini{margin-left:6px}
+  #errCard{margin-top:12px}
+</style>
+<script id="__webplus">
+(function(){
+  // ① 主题切换
+  var THEME_KEY = "sqa_theme";
+  function applyTheme(t){ document.documentElement.setAttribute("data-theme", t);
+    var b = document.getElementById("btnTheme"); if (b) b.textContent = (t === "light" ? "🌙 夜间" : "☀️ 日间"); }
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
+  var fabs = document.createElement("div"); fabs.id = "fabs";
+  var bt = document.createElement("button"); bt.id = "btnTheme"; bt.textContent = "☀️ 日间";
+  bt.onclick = function(){ var t = (document.documentElement.getAttribute("data-theme")==="light") ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, t); applyTheme(t); };
+  fabs.appendChild(bt); document.body.appendChild(fabs);
+
+  function el(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
+  function outCard(){ return document.getElementById("outCard"); }
+
+  // ② 流式解题（覆盖原 solveText），并自动判断多题
+  window.solveText = async function(t){
+    var msg = document.getElementById("msg"), btn = document.getElementById("btnAsk");
+    var multi = (t.match(/\n\s*\d{1,2}\s*[.)、]/g) || []).length >= 1;
+    msg.textContent = multi ? "逐题作答中…" : "思考中…"; btn.disabled = true;
+    try{
+      if (multi){
+        var r = await fetch("/api/solve", {method:"POST",
+          headers: Object.assign({"Content-Type":"application/json"}, (window.H?H():{})),
+          body: JSON.stringify({text:t, multi:true})});
+        var j = await r.json();
+        if (j.error){ msg.textContent = "出错：" + j.error; return; }
+        var oc = outCard(); oc.style.display="block";
+        document.getElementById("ans").textContent = "共 " + j.count + " 题";
+        document.getElementById("fill").textContent = "";
+        document.getElementById("meta").innerHTML = '<span class="tag">多题</span>';
+        var list = document.getElementById("why");
+        list.innerHTML = (j.items||[]).map(function(it,i){
+          return "<div style='margin:10px 0;padding-top:8px;border-top:1px solid var(--line)'>" +
+            "<b>"+(i+1)+". "+ (it.answer||"(无)") +"</b>" +
+            (it.fill? "<div style='color:var(--accent)'>填入："+it.fill+"</div>":"") +
+            "<div style='color:var(--sub);font-size:13px'>"+((it.text||"").slice(0,80))+"</div></div>";
+        }).join("");
+        msg.textContent = "完成";
+        return;
+      }
+      var resp = await fetch("/api/solve", {method:"POST",
+        headers: Object.assign({"Content-Type":"application/json"}, (window.H?H():{})),
+        body: JSON.stringify({text:t, stream:true})});
+      var oc2 = outCard(); oc2.style.display="block";
+      var ansEl=document.getElementById("ans"), whyEl=document.getElementById("why"),
+          fillEl=document.getElementById("fill"), metaEl=document.getElementById("meta");
+      ansEl.textContent=""; fillEl.textContent=""; whyEl.textContent=""; metaEl.innerHTML="";
+      var rd = resp.body.getReader(), dec = new TextDecoder(), buf="", full="";
+      while(true){
+        var step = await rd.read(); if (step.done) break;
+        buf += dec.decode(step.value, {stream:true});
+        var parts = buf.split("\n\n"); buf = parts.pop();
+        for (var k=0;k<parts.length;k++){
+          var line = parts[k].replace(/^data: /, "").trim(); if (!line) continue;
+          var d; try{ d = JSON.parse(line); }catch(e){ continue; }
+          if (d.delta){ full += d.delta; whyEl.textContent = full.slice(-1200); whyEl.scrollTop = whyEl.scrollHeight; }
+          if (d.done){ ansEl.textContent = d.answer || ""; if (d.fill){ fillEl.textContent = "填入答案：" + d.fill;
+              try{ await navigator.clipboard.writeText(d.fill); msg.textContent = "已复制填入答案"; }catch(e){} }
+            metaEl.innerHTML = '<span class="tag">'+((d.usage&&d.usage.total_tokens)||0)+' tokens</span><span class="tag">¥'+Number(d.cost||0).toFixed(4)+'</span>'; }
+          if (d.error){ msg.textContent = "出错：" + d.error; }
+        }
+      }
+      if (!msg.textContent || msg.textContent === "思考中…") msg.textContent = "";
+    }catch(e){ msg.textContent = "网络出错：" + e.message; }
+    finally { btn.disabled = false; }
+  };
+
+  // ③ 结果卡加「标错了 / 卡片」
+  function patchOutCard(){
+    var oc = outCard(); if (!oc || oc.dataset.patched) return; oc.dataset.patched = "1";
+    var row = oc.querySelector(".rowline") || oc;
+    var bad = el("button","mini","标错了");
+    bad.onclick = async function(){
+      var text = document.getElementById("q").value.trim();
+      var answer = document.getElementById("ans").textContent;
+      var fill = (document.getElementById("fill").textContent||"").replace("填入答案：","");
+      var r = await fetch("/api/error", {method:"POST", headers: Object.assign({"Content-Type":"application/json"}, (window.H?H():{})),
+        body: JSON.stringify({text:text, answer:answer, fill:fill})});
+      var j = await r.json(); document.getElementById("msg").textContent = j.saved ? "已记入错题本" : ("失败："+(j.error||""));
+      loadErrors();
+    };
+    var card = el("button","mini","存为图片");
+    card.onclick = function(){ makeCard(); };
+    row.appendChild(bad); row.appendChild(card);
+  }
+
+  // ④ 错题本面板
+  async function loadErrors(){
+    if (!window.token && !localStorage.getItem("sqa_token")) return;
+    var r = await fetch("/api/errors?limit=20", {headers: (window.H?H():{})});
+    if (!r.ok) return; var j = await r.json(); var items = j.items||[];
+    var host = document.getElementById("errList");
+    if (!host){ var card = el("div","card"); card.id="errCard";
+      card.innerHTML = '<div style="display:flex;justify-content:space-between"><b>错题本</b><span class="sub" id="errMsg" style="margin:0"></span></div><div id="errList" style="margin-top:8px"></div>';
+      outCard().parentNode.insertBefore(card, outCard().nextSibling); host = document.getElementById("errList"); }
+    document.getElementById("errMsg").textContent = items.length ? (items.length + " 条") : "空";
+    host.innerHTML = items.map(function(it){
+      return "<div class='hitem'><b>"+((it.answer||"").replace(/</g,"&lt;"))+"</b><div class='sub'>"+((it.text||"").replace(/</g,"&lt;").slice(0,70))+"</div></div>";
+    }).join("");
+  }
+
+  // ⑤ 分享卡片（canvas，纯前端）
+  function makeCard(){
+    var w=900,h=1200, c=document.createElement("canvas"); c.width=w; c.height=h;
+    var g=c.getContext("2d");
+    g.fillStyle="#0f141b"; g.fillRect(0,0,w,h);
+    g.fillStyle="#4d9dff"; g.fillRect(0,0,w,8);
+    g.fillStyle="#e9eefb"; g.font="bold 34px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("屏幕问答 · 作答卡片", 60, 100);
+    var ans=(document.getElementById("ans").textContent||"").replace(/\n/g," ");
+    var fill=(document.getElementById("fill").textContent||"").replace("填入答案：","");
+    var q=(document.getElementById("q").value||"").replace(/\s+/g," ").slice(0,220);
+    g.fillStyle="#8fa0bb"; g.font="20px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("题目", 60, 170);
+    g.fillStyle="#dbe4f3"; g.font="24px system-ui,Segoe UI,Microsoft YaHei";
+    var lines=[]; var cur=""; for (var i=0;i<q.length;i++){ cur+=q[i]; if (g.measureText(cur).width>w-120){ lines.push(cur); cur=""; } } if (cur) lines.push(cur);
+    lines.slice(0,6).forEach(function(L,i){ g.fillText(L, 60, 215+i*36); });
+    g.fillStyle="#8fa0bb"; g.font="20px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("答案", 60, 215+lines.length*36+40);
+    g.fillStyle="#3ddc84"; g.font="bold 64px system-ui,Segoe UI,Microsoft YaHei"; g.fillText(ans.slice(0,26), 60, 215+lines.length*36+130);
+    g.fillStyle="#e9eefb"; g.font="28px system-ui,Segoe UI,Microsoft YaHei"; g.fillText(fill?("填入："+fill):"", 60, 215+lines.length*36+200);
+    g.fillStyle="#6b7a90"; g.font="18px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("q.wuyolo.com · " + new Date().toLocaleString(), 60, h-50);
+    c.toBlob(function(b){ var a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download="sqa-card.png"; a.click(); });
+  }
+
+  // ⑥ 初始化
+  document.addEventListener("DOMContentLoaded", function(){ patchOutCard(); loadErrors(); });
+  setTimeout(function(){ patchOutCard(); loadErrors(); }, 1200);
+  setInterval(function(){ patchOutCard(); }, 2000);
+})();
 </script>
 </body>
 </html>

@@ -202,6 +202,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("index.html")
         if path.startswith("/static/"):
             return self._static(path[len("/static/"):])
+        if path == "/api/errors":
+            u = self._user()
+            if not u:
+                return self._json({"error": "未登录"}, 401)
+            q = parse_qs(urlparse(self.path).query)
+            limit = max(1, min(200, int((q.get("limit") or ["50"])[0] or 50)))
+            rows = store.pull_records(int(u["id"]), "errors", 0.0, limit)
+            import json as _json
+            items = []
+            for r in rows:
+                try:
+                    items.append(_json.loads(r["payload"]))
+                except Exception:  # noqa: BLE001
+                    continue
+            items.sort(key=lambda x: x.get("ts") or 0, reverse=True)
+            return self._json({"items": items[:limit], "count": len(items)})
         if path == "/api/history":
             u = self._user()
             if not u:
@@ -279,6 +295,22 @@ class Handler(BaseHTTPRequestHandler):
                 k = licensing.new_key(days=days, note=str(b.get("note", ""))[:120],
                                       machine_limit=int(b.get("machines", 1) or 1))
                 return self._json({"key": k, "days": days})
+            if path == "/api/error":
+                u = self._user()
+                if not u:
+                    return self._json({"error": "未登录"}, 401)
+                b = self._body()
+                import hashlib as _hl
+                import json as _json
+                import time as _t
+                rec = {"text": (b.get("text") or "")[:500],
+                       "answer": (b.get("answer") or "")[:300],
+                       "fill": (b.get("fill") or "")[:200],
+                       "note": (b.get("note") or "")[:200], "ts": _t.time()}
+                store.push_records(int(u["id"]), "errors", [{
+                    "uid": _hl.sha1((str(_t.time()) + rec["text"]).encode()).hexdigest()[:16],
+                    "ts": rec["ts"], "payload": _json.dumps(rec, ensure_ascii=False)}])
+                return self._json({"saved": 1})
             if path == "/api/solve":
                 return self._solve()
             if path == "/api/solve_image":
@@ -367,6 +399,10 @@ class Handler(BaseHTTPRequestHandler):
             if left <= 0:
                 return self._json({"error": "今日额度用完了"}, 429)
         model = b.get("model") or "deepseek-chat"
+        if b.get("multi"):
+            return self._solve_multi(text, model, u)
+        if b.get("stream"):
+            return self._solve_stream(text, model, u)
         try:
             out = upstream_chat({"model": model, "temperature": 0.2, "max_tokens": 1200,
                                  "messages": [{"role": "system", "content": SYSTEM},
@@ -396,6 +432,91 @@ class Handler(BaseHTTPRequestHandler):
                            "fill": (fill.group(1).strip() if fill else ""),
                            "reasoning": content,
                            "usage": usage, "cost": round(_cost(pt, ct), 6)})
+
+    def _parse(self, content: str):
+        fill = _FILL_RE.search(content)
+        ans = _ANS_RE.search(content)
+        return (ans.group(1).strip() if ans else content[:400],
+                fill.group(1).strip() if fill else "")
+
+    def _save_record(self, u, text, answer, fill, model, pt, ct) -> None:
+        if not u:
+            return
+        try:
+            import hashlib as _hl
+            import json as _json
+            import time as _t
+            rec = {"text": text[:500], "answer": answer[:300], "fill": fill[:200],
+                   "model": model, "pt": pt, "ct": ct, "ts": _t.time()}
+            store.push_records(int(u["id"]), "records", [{
+                "uid": _hl.sha1((str(_t.time()) + text).encode()).hexdigest()[:16],
+                "ts": rec["ts"], "payload": _json.dumps(rec, ensure_ascii=False)}])
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _solve_stream(self, text: str, model: str, u) -> None:
+        import json as _json
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        buf = []
+
+        def cb(ch: str) -> None:
+            buf.append(ch)
+            try:
+                self.wfile.write(("data: " + _json.dumps({"delta": ch}, ensure_ascii=False) + "\n\n").encode())
+                self.wfile.flush()
+            except Exception:  # noqa: BLE001
+                pass
+
+        try:
+            out = upstream_chat({"model": model, "temperature": 0.2, "max_tokens": 1200,
+                                 "messages": [{"role": "system", "content": SYSTEM},
+                                              {"role": "user", "content": text[:6000]}]}, stream_cb=cb)
+        except Exception as exc:  # noqa: BLE001
+            self.wfile.write(("data: " + _json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False) + "\n\n").encode())
+            self.wfile.flush()
+            return
+        content = out.get("content") or "".join(buf)
+        answer, fill = self._parse(content)
+        usage = out.get("usage") or {}
+        pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+        if u:
+            store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
+            self._save_record(u, text, answer, fill, model, pt, ct)
+        done = _json.dumps({"done": True, "answer": answer, "fill": fill,
+                            "usage": usage, "cost": round(_cost(pt, ct), 6)}, ensure_ascii=False)
+        self.wfile.write(("data: " + done + "\n\n").encode())
+        self.wfile.flush()
+
+    def _solve_multi(self, text: str, model: str, u) -> None:
+        import re as _re
+        parts = _re.split(r"(?m)^\s*\d{1,2}\s*[.)\u3001]\s+|\n{2,}", text)
+        qs = [p.strip() for p in parts if p and p.strip() and len(p.strip()) >= 4]
+        qs = [q for q in qs if not q.isdigit()][:8]
+        if len(qs) < 2:
+            qs = [text.strip()]
+        items = []
+        for q in qs:
+            try:
+                out = upstream_chat({"model": model, "temperature": 0.2, "max_tokens": 1200,
+                                     "messages": [{"role": "system", "content": SYSTEM},
+                                                  {"role": "user", "content": q[:6000]}]})
+            except Exception as exc:  # noqa: BLE001
+                items.append({"text": q, "error": f"{type(exc).__name__}: {exc}"})
+                continue
+            content = out.get("content") or ""
+            answer, fill = self._parse(content)
+            usage = out.get("usage") or {}
+            pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+            if u:
+                store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
+                self._save_record(u, q, answer, fill, model, pt, ct)
+            items.append({"text": q[:300], "answer": answer, "fill": fill,
+                          "reasoning": content[:1500], "cost": round(_cost(pt, ct), 6)})
+        return self._json({"items": items, "count": len(items)})
 
     def _solve_image(self) -> None:
         b = self._body()

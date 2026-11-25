@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>屏幕问答 · 网页版</title>
+<style>
+  :root{--bg:#0a0c10;--card:#131820;--line:#232b38;--tx:#e9ecf2;--dim:#98a2b3;--ac:#4d9dff;--ok:#3ddc84}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 "Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:22px 16px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+  .chip{background:var(--card);border:1px solid var(--line);color:var(--fg);
+        border-radius:999px;padding:7px 14px;font-size:13px;cursor:pointer}
+  .chip:hover{border-color:var(--accent);color:var(--accent)}
+  .hitem{padding:9px 0;border-top:1px solid var(--line);cursor:pointer}
+  .hitem:first-child{border-top:0}
+  .hitem b{font-weight:600;font-size:14px}
+  .hitem .sub{margin:2px 0 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  textarea{width:100%;min-height:110px;background:#0d1117;color:var(--tx);border:1px solid var(--line);
+           border-radius:8px;padding:10px;font:14px/1.5 inherit;resize:vertical}
+  input[type=text],input[type=password]{width:100%;background:#0d1117;color:var(--tx);border:1px solid var(--line);
+           border-radius:8px;padding:9px 10px;font:14px inherit;margin:4px 0 10px}
+  button{background:var(--ac);color:#06101f;border:0;border-radius:8px;padding:9px 16px;font:600 14px inherit;cursor:pointer}
+  button.ghost{background:transparent;color:var(--tx);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .ans{font-size:24px;font-weight:700;color:var(--ok);word-break:break-all}
+  .fill{font-size:15px;color:#9fe8c1;margin-top:6px}
+  pre{white-space:pre-wrap;word-break:break-word;color:var(--dim);font:13px/1.6 ui-monospace,Consolas,monospace;
+      background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:320px;overflow:auto}
+  .tag{display:inline-block;font-size:12px;color:var(--dim);border:1px solid var(--line);
+       border-radius:20px;padding:1px 9px;margin-right:6px}
+  .rowline{display:flex;gap:14px;flex-wrap:wrap;color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>屏幕问答 · 网页版</h1>
+  <div class="sub">把题目粘进来（英文/中文都行）。手机上也能用。</div>
+
+  <div class="card" id="authCard">
+    <div style="font-weight:600;margin-bottom:6px">登录 / 注册（可选）</div>
+    <div class="sub" style="margin-bottom:8px">不登录也能试 3 次；登录后按额度使用，记录可同步到桌面端。</div>
+    <input type="text" id="name" placeholder="用户名" autocomplete="username">
+    <input type="password" id="pw" placeholder="密码（至少 6 位）" autocomplete="current-password">
+    <div class="row">
+      <button id="btnLogin">登录</button>
+      <button class="ghost" id="btnReg">注册</button>
+      <span id="authMsg" class="sub" style="margin:0"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <textarea id="q" placeholder="例如：Solve for x.  9x + 6 = 60"></textarea>
+    <div class="row">
+      <button id="btnAsk">解题</button>
+      <label class="ghost" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer">
+        上传题图<input type="file" id="file" accept="image/*" style="display:none">
+      </label>
+      <span id="msg" class="sub" style="margin:0"></span>
+    </div>
+  </div>
+
+  <div class="chips" id="samples">
+    <span class="sub" style="margin:0 8px 0 0">试试：</span>
+    <button class="chip" data-q="Solve for x.  9x + 6 = 60">解方程</button>
+    <button class="chip" data-q="Simplify the expression: (x^2 - 9) / (x - 3)">化简</button>
+    <button class="chip" data-q="In Python, the ___ character is used to create a comment.">填空</button>
+  </div>
+
+  <div class="card" id="statCard" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <b>我的用量</b><span class="sub" id="statMsg" style="margin:0"></span>
+    </div>
+    <div class="sub" id="statSum" style="margin:6px 0 0"></div>
+    <div id="statBars" style="display:flex;gap:3px;align-items:flex-end;height:64px;margin-top:10px"></div>
+    <div class="sub" id="statAxis" style="display:flex;justify-content:space-between;margin-top:2px"></div>
+  </div>
+  <div class="card" id="outCard" style="display:none" data-patched="1">
+    <div class="ans" id="ans"></div>
+    <div class="fill" id="fill"></div>
+    <div class="rowline" style="margin-top:8px"><span id="meta"></span><button class="mini">标错了</button><button class="mini">存为图片</button></div>
+    <pre id="why"></pre>
+  </div>
+
+  <div class="card" id="histCard" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <b>最近作答</b><span class="sub" id="histMsg" style="margin:0"></span>
+    </div>
+    <div id="histList" style="margin-top:8px"></div>
+  </div>
+
+  <div class="sub">隐私：题目文字会发给模型服务；服务器只保存你自己账号下的作答记录（可删除），不用于训练。</div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+bindSamples();
+let token = localStorage.getItem("sqa_token") || "";
+const H = () => token ? {"Authorization": "Bearer " + token} : {};
+
+$("btnLogin").onclick = async () => {
+  const r = await fetch("/api/login", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name:$("name").value, password:$("pw").value})});
+  const j = await r.json();
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats(); loadHistory();
+    $("authMsg").textContent = "已登录：" + j.user.name; }
+  else $("authMsg").textContent = j.error || "登录失败";
+};
+$("btnReg").onclick = async () => {
+  const r = await fetch("/api/register", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name:$("name").value, password:$("pw").value})});
+  const j = await r.json();
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats(); loadHistory();
+    $("authMsg").textContent = "注册成功：" + j.user.name; }
+  else $("authMsg").textContent = j.error || "注册失败";
+};
+
+async function solveText(t){
+  $("msg").textContent = "思考中…"; $("btnAsk").disabled = true;
+  try{
+    const r = await fetch("/api/solve", {method:"POST",
+      headers: Object.assign({"Content-Type":"application/json"}, H()),
+      body: JSON.stringify({text: t})});
+    const j = await r.json();
+    if (j.error) { $("msg").textContent = "出错：" + j.error; return; }
+    $("outCard").style.display = "block";
+    $("ans").textContent = j.answer || "";
+    $("fill").textContent = j.fill ? ("填入答案：" + j.fill) : "";
+    $("meta").innerHTML = `<span class="tag">${(j.usage&&j.usage.total_tokens)||0} tokens</span>` +
+      `<span class="tag">¥${(j.cost||0).toFixed(4)}</span>`;
+    $("why").textContent = j.reasoning || "";
+    if (j.fill) { try { await navigator.clipboard.writeText(j.fill); $("msg").textContent = "已复制填入答案"; }
+                  catch(e) { $("msg").textContent = ""; } }
+  } finally { $("btnAsk").disabled = false; if ($("msg").textContent === "思考中…") $("msg").textContent = ""; }
+}
+$("btnAsk").onclick = () => { const t = $("q").value.trim();
+  if (t.length < 4) { $("msg").textContent = "题目太短"; return; } solveText(t); };
+$("file").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  $("msg").textContent = "上传识别中…";
+  // 手机拍照常见 3-8MB，先压到长边 1200 + JPEG 0.85，上传快 3 倍且识别更准
+  const b64 = await (async () => {
+    try {
+      const img = await createImageBitmap(f);
+      const max = 1200, scale = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+      const cx = cv.getContext("2d");
+      cx.imageSmoothingQuality = "high";
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      return cv.toDataURL("image/jpeg", 0.85);
+    } catch (err) {
+      return await new Promise(res => { const fr = new FileReader();
+        fr.onload = () => res(fr.result); fr.readAsDataURL(f); });
+    }
+  })();
+  const r = await fetch("/api/solve_image", {method:"POST",
+    headers: Object.assign({"Content-Type":"application/json"}, H()),
+    body: JSON.stringify({image_b64: b64})});
+  const j = await r.json();
+  if (j.error) { $("msg").textContent = "识别失败：" + j.error; return; }
+  $("q").value = j.text || ""; $("outCard").style.display = "block";
+  $("ans").textContent = j.answer || ""; $("fill").textContent = j.fill ? ("填入答案：" + j.fill) : "";
+  $("why").textContent = j.reasoning || ""; $("msg").textContent = "识别完成";
+};
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
+function bindSamples(){
+  document.querySelectorAll("#samples .chip").forEach(b => {
+    b.onclick = () => { $("q").value = b.dataset.q; $("q").focus(); };
+  });
+  $("q").addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); if ($("q").value.trim()) solveText($("q").value.trim()); }
+  });
+}
+
+async function loadHistory(){
+  if (!token) return;
+  const r = await fetch("/api/history?limit=10", {headers: H()});
+  if (r.status === 401) return;
+  const j = await r.json();
+  const items = j.items || [];
+  $("histCard").style.display = "block";
+  $("histMsg").textContent = items.length ? (items.length + " 条") : "还没有记录";
+  $("histList").innerHTML = items.map((it, i) => {
+    const t = (it.text || "").replace(/</g, "&lt;").slice(0, 70);
+    const a = (it.answer || "").replace(/</g, "&lt;").slice(0, 40);
+    return `<div class="hitem" data-i="${i}"><b>${a || "(无答案)"}</b><div class="sub">${t}</div></div>`;
+  }).join("");
+  document.querySelectorAll("#histList .hitem").forEach(el => {
+    el.onclick = () => { const it = items[Number(el.dataset.i)]; if (!it) return;
+      $("q").value = it.text || ""; $("outCard").style.display = "block";
+      $("ans").textContent = it.answer || ""; $("fill").textContent = it.fill ? ("填入答案：" + it.fill) : "";
+      $("why").textContent = ""; $("meta").innerHTML = `<span class="tag">历史记录</span>`;
+      $("q").scrollIntoView({behavior:"smooth", block:"center"}); };
+  });
+}
+
+async function loadStats() {
+  if (!token) return;
+  const r = await fetch("/api/stats", {headers: H()});
+  if (r.status === 401) { $("statMsg").textContent = "未登录"; return; }
+  const j = await r.json();
+  if (j.error) { $("statMsg").textContent = j.error; return; }
+  const s = j.summary || {}, daily = j.daily || [];
+  $("statCard").style.display = "block";
+  $("statMsg").textContent = "";
+  $("statSum").textContent = "今日 " + (s.today_n || 0) + " 题 · ¥" + Number(s.today_cost || 0).toFixed(4) +
+    " ／ 累计 " + (s.total_n || 0) + " 题 · ¥" + Number(s.total_cost || 0).toFixed(4);
+  const max = Math.max(0.0001, ...daily.map(d => d.cost));
+  $("statBars").innerHTML = daily.map(d => {
+    const hgt = Math.max(2, Math.round(60 * (d.cost / max)));
+    const today = d.date === new Date().toISOString().slice(0, 10);
+    return '<div title="' + d.date + ' · ¥' + d.cost.toFixed(4) + ' · ' + d.n + ' 题" style="flex:1;height:' +
+      hgt + 'px;background:' + (today ? "#3ddc84" : "#4d9dff") + ';border-radius:2px;opacity:' +
+      (today ? 1 : 0.65) + '"></div>';
+  }).join("");
+  $("statAxis").innerHTML = "<span>" + (daily[0] ? daily[0].date.slice(5) : "") + "</span><span>近 30 天花费</span><span>" +
+    (daily.length ? daily[daily.length - 1].date.slice(5) : "") + "</span>";
+}
+if (token) loadStats(); loadHistory();
+</script>
+<style id="__webplus_css">
+  :root[data-theme="light"]{--bg:#f6f8fb;--fg:#111827;--card:#ffffff;--line:#e3e9f2;--sub:#5b6472;--accent:#2563eb}
+  #fabs{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;z-index:9}
+  #fabs button{width:auto;padding:8px 12px;border-radius:999px;background:var(--card);color:var(--fg);border:1px solid var(--line);font-size:13px;cursor:pointer}
+  .mini{padding:5px 10px;font-size:12px;border-radius:999px;background:transparent;border:1px solid var(--line);color:var(--sub);cursor:pointer;margin-left:8px}
+  .hitem .mini{margin-left:6px}
+  #errCard{margin-top:12px}
+</style>
+<script id="__webplus">
+(function(){
+  // ① 主题切换
+  var THEME_KEY = "sqa_theme";
+  function applyTheme(t){ document.documentElement.setAttribute("data-theme", t);
+    var b = document.getElementById("btnTheme"); if (b) b.textContent = (t === "light" ? "🌙 夜间" : "☀️ 日间"); }
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
+  var fabs = document.createElement("div"); fabs.id = "fabs";
+  var bt = document.createElement("button"); bt.id = "btnTheme"; bt.textContent = "☀️ 日间";
+  bt.onclick = function(){ var t = (document.documentElement.getAttribute("data-theme")==="light") ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, t); applyTheme(t); };
+  fabs.appendChild(bt); document.body.appendChild(fabs);
+
+  function el(tag, cls, txt){ var e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; }
+  function outCard(){ return document.getElementById("outCard"); }
+
+  // ② 流式解题（覆盖原 solveText），并自动判断多题
+  window.solveText = async function(t){
+    var msg = document.getElementById("msg"), btn = document.getElementById("btnAsk");
+    var multi = (t.match(/\n\s*\d{1,2}\s*[.)、]/g) || []).length >= 1;
+    msg.textContent = multi ? "逐题作答中…" : "思考中…"; btn.disabled = true;
+    try{
+      if (multi){
+        var r = await fetch("/api/solve", {method:"POST",
+          headers: Object.assign({"Content-Type":"application/json"}, (window.H?H():{})),
+          body: JSON.stringify({text:t, multi:true})});
+        var j = await r.json();
+        if (j.error){ msg.textContent = "出错：" + j.error; return; }
+        var oc = outCard(); oc.style.display="block";
+        document.getElementById("ans").textContent = "共 " + j.count + " 题";
+        document.getElementById("fill").textContent = "";
+        document.getElementById("meta").innerHTML = '<span class="tag">多题</span>';
+        var list = document.getElementById("why");
+        list.innerHTML = (j.items||[]).map(function(it,i){
+          return "<div style='margin:10px 0;padding-top:8px;border-top:1px solid var(--line)'>" +
+            "<b>"+(i+1)+". "+ (it.answer||"(无)") +"</b>" +
+            (it.fill? "<div style='color:var(--accent)'>填入："+it.fill+"</div>":"") +
+            "<div style='color:var(--sub);font-size:13px'>"+((it.text||"").slice(0,80))+"</div></div>";
+        }).join("");
+        msg.textContent = "完成";
+        return;
+      }
+      var resp = await fetch("/api/solve", {method:"POST",
+        headers: Object.assign({"Content-Type":"application/json"}, (window.H?H():{})),
+        body: JSON.stringify({text:t, stream:true})});
+      var oc2 = outCard(); oc2.style.display="block";
+      var ansEl=document.getElementById("ans"), whyEl=document.getElementById("why"),
+          fillEl=document.getElementById("fill"), metaEl=document.getElementById("meta");
+      ansEl.textContent=""; fillEl.textContent=""; whyEl.textContent=""; metaEl.innerHTML="";
+      var rd = resp.body.getReader(), dec = new TextDecoder(), buf="", full="";
+      while(true){
+        var step = await rd.read(); if (step.done) break;
+        buf += dec.decode(step.value, {stream:true});
+        var parts = buf.split("\n\n"); buf = parts.pop();
+        for (var k=0;k<parts.length;k++){
+          var line = parts[k].replace(/^data: /, "").trim(); if (!line) continue;
+          var d; try{ d = JSON.parse(line); }catch(e){ continue; }
+          if (d.delta){ full += d.delta; whyEl.textContent = full.slice(-1200); whyEl.scrollTop = whyEl.scrollHeight; }
+          if (d.done){ ansEl.textContent = d.answer || ""; if (d.fill){ fillEl.textContent = "填入答案：" + d.fill;
+              try{ await navigator.clipboard.writeText(d.fill); msg.textContent = "已复制填入答案"; }catch(e){} }
+            metaEl.innerHTML = '<span class="tag">'+((d.usage&&d.usage.total_tokens)||0)+' tokens</span><span class="tag">¥'+Number(d.cost||0).toFixed(4)+'</span>'; }
+          if (d.error){ msg.textContent = "出错：" + d.error; }
+        }
+      }
+      if (!msg.textContent || msg.textContent === "思考中…") msg.textContent = "";
+    }catch(e){ msg.textContent = "网络出错：" + e.message; }
+    finally { btn.disabled = false; }
+  };
+
+  // ③ 结果卡加「标错了 / 卡片」
+  function patchOutCard(){
+    var oc = outCard(); if (!oc || oc.dataset.patched) return; oc.dataset.patched = "1";
+    var row = oc.querySelector(".rowline") || oc;
+    var bad = el("button","mini","标错了");
+    bad.onclick = async function(){
+      var text = document.getElementById("q").value.trim();
+      var answer = document.getElementById("ans").textContent;
+      var fill = (document.getElementById("fill").textContent||"").replace("填入答案：","");
+      var r = await fetch("/api/error", {method:"POST", headers: Object.assign({"Content-Type":"application/json"}, (window.H?H():{})),
+        body: JSON.stringify({text:text, answer:answer, fill:fill})});
+      var j = await r.json(); document.getElementById("msg").textContent = j.saved ? "已记入错题本" : ("失败："+(j.error||""));
+      loadErrors();
+    };
+    var card = el("button","mini","存为图片");
+    card.onclick = function(){ makeCard(); };
+    row.appendChild(bad); row.appendChild(card);
+  }
+
+  // ④ 错题本面板
+  async function loadErrors(){
+    if (!window.token && !localStorage.getItem("sqa_token")) return;
+    var r = await fetch("/api/errors?limit=20", {headers: (window.H?H():{})});
+    if (!r.ok) return; var j = await r.json(); var items = j.items||[];
+    var host = document.getElementById("errList");
+    if (!host){ var card = el("div","card"); card.id="errCard";
+      card.innerHTML = '<div style="display:flex;justify-content:space-between"><b>错题本</b><span class="sub" id="errMsg" style="margin:0"></span></div><div id="errList" style="margin-top:8px"></div>';
+      outCard().parentNode.insertBefore(card, outCard().nextSibling); host = document.getElementById("errList"); }
+    document.getElementById("errMsg").textContent = items.length ? (items.length + " 条") : "空";
+    host.innerHTML = items.map(function(it){
+      return "<div class='hitem'><b>"+((it.answer||"").replace(/</g,"&lt;"))+"</b><div class='sub'>"+((it.text||"").replace(/</g,"&lt;").slice(0,70))+"</div></div>";
+    }).join("");
+  }
+
+  // ⑤ 分享卡片（canvas，纯前端）
+  function makeCard(){
+    var w=900,h=1200, c=document.createElement("canvas"); c.width=w; c.height=h;
+    var g=c.getContext("2d");
+    g.fillStyle="#0f141b"; g.fillRect(0,0,w,h);
+    g.fillStyle="#4d9dff"; g.fillRect(0,0,w,8);
+    g.fillStyle="#e9eefb"; g.font="bold 34px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("屏幕问答 · 作答卡片", 60, 100);
+    var ans=(document.getElementById("ans").textContent||"").replace(/\n/g," ");
+    var fill=(document.getElementById("fill").textContent||"").replace("填入答案：","");
+    var q=(document.getElementById("q").value||"").replace(/\s+/g," ").slice(0,220);
+    g.fillStyle="#8fa0bb"; g.font="20px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("题目", 60, 170);
+    g.fillStyle="#dbe4f3"; g.font="24px system-ui,Segoe UI,Microsoft YaHei";
+    var lines=[]; var cur=""; for (var i=0;i<q.length;i++){ cur+=q[i]; if (g.measureText(cur).width>w-120){ lines.push(cur); cur=""; } } if (cur) lines.push(cur);
+    lines.slice(0,6).forEach(function(L,i){ g.fillText(L, 60, 215+i*36); });
+    g.fillStyle="#8fa0bb"; g.font="20px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("答案", 60, 215+lines.length*36+40);
+    g.fillStyle="#3ddc84"; g.font="bold 64px system-ui,Segoe UI,Microsoft YaHei"; g.fillText(ans.slice(0,26), 60, 215+lines.length*36+130);
+    g.fillStyle="#e9eefb"; g.font="28px system-ui,Segoe UI,Microsoft YaHei"; g.fillText(fill?("填入："+fill):"", 60, 215+lines.length*36+200);
+    g.fillStyle="#6b7a90"; g.font="18px system-ui,Segoe UI,Microsoft YaHei"; g.fillText("q.wuyolo.com · " + new Date().toLocaleString(), 60, h-50);
+    c.toBlob(function(b){ var a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download="sqa-card.png"; a.click(); });
+  }
+
+  // ⑥ 初始化
+  document.addEventListener("DOMContentLoaded", function(){ patchOutCard(); loadErrors(); });
+  setTimeout(function(){ patchOutCard(); loadErrors(); }, 1200);
+  setInterval(function(){ patchOutCard(); }, 2000);
+})();
+</script><div id="fabs"><button id="btnTheme">☀️ 日间</button></div>
+
+
+</body></html>
