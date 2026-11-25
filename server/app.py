@@ -38,7 +38,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import licensing
+try:
+    import licensing
+except Exception:  # noqa: BLE001  容器里若漏打包 licensing.py，服务仍要能起来
+    licensing = None
 import store
 
 ROOT = Path(__file__).resolve().parent
@@ -250,6 +253,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/licenses":
             if not _admin_ok(self.headers.get("X-Admin-Token", "")):
                 return self._json({"error": "forbidden"}, 403)
+            if licensing is None:
+                return self._json({"error": "授权模块未部署"}, 503)
             return self._json({"licenses": licensing.list_licenses(200)})
         if path == "/api/health":
             return self._json({"ok": True, "mock": MOCK, "upstream": UPSTREAM_BASE})
@@ -283,15 +288,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"saved": n1 + n2})
             if path == "/api/license/activate":
                 b = self._body()
+                if licensing is None:
+                    return self._json({"ok": False, "error": "授权模块未部署"}, 503)
                 return self._json(licensing.activate(b.get("key", ""), b.get("machine", ""), self._ip()))
             if path == "/api/license/check":
                 b = self._body()
+                if licensing is None:
+                    return self._json({"ok": False, "error": "授权模块未部署"}, 503)
                 return self._json(licensing.check(b.get("key", ""), b.get("machine", ""), self._ip()))
             if path == "/api/admin/newkey":
                 if not _admin_ok(self.headers.get("X-Admin-Token", "")):
                     return self._json({"error": "forbidden"}, 403)
                 b = self._body()
                 days = int(b.get("days", 365) or 365)
+                if licensing is None:
+                    return self._json({"error": "授权模块未部署"}, 503)
                 k = licensing.new_key(days=days, note=str(b.get("note", ""))[:120],
                                       machine_limit=int(b.get("machines", 1) or 1))
                 return self._json({"key": k, "days": days})
@@ -567,7 +578,8 @@ def main() -> int:
     args = ap.parse_args()
     _secret()
     store.init()
-    licensing.init()
+    if licensing is not None:
+        licensing.init()
     if MOCK:
         print("[!] SQA_MOCK=1：不调用真实模型，返回固定答案")
     if not UPSTREAM_KEY and not MOCK:
