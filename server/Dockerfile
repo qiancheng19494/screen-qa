@@ -3,8 +3,11 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY store.py app.py ./
 COPY static ./static
-# 可选：想让网页版支持"上传题图"，取消下一行注释（镜像会大 ~250MB）
-# RUN pip install --no-cache-dir rapidocr-onnxruntime
+# 网页版"上传题图"需要 OCR 引擎（镜像约 +250MB）
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir rapidocr-onnxruntime
 ENV PORT=8080
 VOLUME ["/app/data"]
 ENV SQA_DB=/app/data/sqa.db
