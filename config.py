@@ -130,6 +130,9 @@ DEFAULTS = {
     "mini": False,
     "plot": True,
     "exam_date": "",
+    "license_required": False,
+    "license_server": "https://q.wuyolo.com",
+    "license_key": "",
     # 花费估算用（元/百万 token，按 DeepSeek 官方价，可按自己套餐改）
     "price_in": 2.0,
     "price_out": 8.0,

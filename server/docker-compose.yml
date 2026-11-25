@@ -8,6 +8,8 @@ services:
       UPSTREAM_BASE: https://api.deepseek.com
       UPSTREAM_KEY: ${UPSTREAM_KEY:?请设置服务器端 DeepSeek Key}
       SQA_JWT_SECRET: ${SQA_JWT_SECRET:-请改成一串随机字符}
+      SQA_LICENSE_SECRET: ${SQA_LICENSE_SECRET:-}
+      SQA_ADMIN_TOKEN: ${SQA_ADMIN_TOKEN:-}
     volumes:
       - ./data:/app/data
     logging:                      # 默认 json-file 无上限，会吃满磁盘

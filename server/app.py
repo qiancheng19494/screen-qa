@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 from collections import defaultdict, deque
+import hmac
 
 import argparse
 import base64
@@ -37,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import licensing
 import store
 
 ROOT = Path(__file__).resolve().parent
@@ -213,6 +215,10 @@ class Handler(BaseHTTPRequestHandler):
             since = float(parse_qs(urlparse(self.path).query).get("since", ["0"])[0] or 0)
             return self._json({"records": store.pull_records(int(u["id"]), "records", since),
                                "errors": store.pull_records(int(u["id"]), "errors", since)})
+        if path == "/api/admin/licenses":
+            if not _admin_ok(self.headers.get("X-Admin-Token", "")):
+                return self._json({"error": "forbidden"}, 403)
+            return self._json({"licenses": licensing.list_licenses(200)})
         if path == "/api/health":
             return self._json({"ok": True, "mock": MOCK, "upstream": UPSTREAM_BASE})
         return self._json({"error": "not found"}, 404)
@@ -243,6 +249,20 @@ class Handler(BaseHTTPRequestHandler):
                 n1 = store.push_records(int(u["id"]), "records", b.get("records") or [])
                 n2 = store.push_records(int(u["id"]), "errors", b.get("errors") or [])
                 return self._json({"saved": n1 + n2})
+            if path == "/api/license/activate":
+                b = self._body()
+                return self._json(licensing.activate(b.get("key", ""), b.get("machine", ""), self._ip()))
+            if path == "/api/license/check":
+                b = self._body()
+                return self._json(licensing.check(b.get("key", ""), b.get("machine", ""), self._ip()))
+            if path == "/api/admin/newkey":
+                if not _admin_ok(self.headers.get("X-Admin-Token", "")):
+                    return self._json({"error": "forbidden"}, 403)
+                b = self._body()
+                days = int(b.get("days", 365) or 365)
+                k = licensing.new_key(days=days, note=str(b.get("note", ""))[:120],
+                                      machine_limit=int(b.get("machines", 1) or 1))
+                return self._json({"key": k, "days": days})
             if path == "/api/solve":
                 return self._solve()
             if path == "/api/solve_image":
@@ -383,6 +403,14 @@ class Handler(BaseHTTPRequestHandler):
                            "reasoning": content})
 
 
+ADMIN_TOKEN = os.environ.get("SQA_ADMIN_TOKEN", "")
+
+
+def _admin_ok(token: str) -> bool:
+    want = ADMIN_TOKEN or ""
+    return bool(want) and hmac.compare_digest((token or "").strip(), want)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0")
@@ -390,6 +418,7 @@ def main() -> int:
     args = ap.parse_args()
     _secret()
     store.init()
+    licensing.init()
     if MOCK:
         print("[!] SQA_MOCK=1：不调用真实模型，返回固定答案")
     if not UPSTREAM_KEY and not MOCK:

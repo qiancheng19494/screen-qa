@@ -55,3 +55,5 @@ server/secret.key
 server/_srv.log
 server/_upload.png
 server/data/
+server/license.key
+license.json

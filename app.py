@@ -3625,6 +3625,13 @@ class App:
         self.set_status("就绪")
 
     # ------------------------------------------------------------ 设置
+    def open_license(self):
+        import licensing
+        srv = str(self.cfg.get("license_server") or licensing.DEFAULT_SERVER).rstrip("/")
+        info = licensing.status(srv)
+        license_dialog(self.root, self.cfg, info)
+        self.log(f"\u6388\u6743\uff1a{info.get('reason')} \u00b7 \u5269\u4f59 {info.get('days_left', 0)} \u5929")
+
     def open_settings(self):
         bg, card = UI["bg"], UI["card"]
         card2 = UI["card2"]
@@ -3721,6 +3728,7 @@ class App:
         tray_var = tk.BooleanVar(value=bool(self.cfg.get("tray", True)))
         boot_var = tk.BooleanVar(value=bool(self.cfg.get("autostart", False)))
         upd_var = tk.BooleanVar(value=bool(self.cfg.get("check_update", True)))
+        lic_var = tk.BooleanVar(value=bool(self.cfg.get("license_required", False)))
         watch_var = tk.BooleanVar(value=bool(self.cfg.get("watch_clip", False)))
         tts_var = tk.BooleanVar(value=bool(self.cfg.get("tts", False)))
         mini_var = tk.BooleanVar(value=bool(self.cfg.get("mini", False)))
@@ -3742,6 +3750,7 @@ class App:
                                         ("关窗缩到托盘", tray_var),
                                         ("开机自启", boot_var),
                                         ("启动查更新", upd_var),
+                                        ("启动校验授权", lic_var),
                                         ("剪贴板自动作答", watch_var),
                                         ("答完自动朗读", tts_var),
                                         ("迷你答案条", mini_var),
@@ -4001,6 +4010,8 @@ class App:
              padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, "余额", lambda: self.check_balance(silent=False), kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
+        Pill(row7, "\u6388\u6743", self.open_license, kind="flat",
+             height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row7, prompts.L("queue"), self.retry_queue, kind="flat",
              height=26, padx=12, font_size=9, bg=bg).pack(side="left", padx=(10, 0))
         Pill(row8, "云端", self.open_cloud_dialog, kind="flat", height=26,
@@ -4042,6 +4053,7 @@ class App:
             self.cfg["remember_pos"] = bool(pos_var.get())
             self.cfg["tray"] = bool(tray_var.get())
             self.cfg["check_update"] = bool(upd_var.get())
+            self.cfg["license_required"] = bool(lic_var.get())
             self.cfg["theme"] = "light" if theme_var.get() == "浅色" else "dark"
             try:
                 self.cfg["font_scale"] = max(80, min(160, int(float(scale_var.get()))))
@@ -4472,6 +4484,99 @@ def warm_ocr():
         pass
 
 
+def license_dialog(root, cfg, status_info=None):
+    """一机一码激活窗：返回 True 表示已激活/试用可用。"""
+    import licensing
+    srv = str(cfg.get("license_server") or licensing.DEFAULT_SERVER).rstrip("/")
+    info = status_info or licensing.status(srv)
+    win = tk.Toplevel(root)
+    win.title("\u6388\u6743\u6fc0\u6d3b")
+    win.configure(bg=UI["bg"])
+    win.resizable(False, False)
+    win.attributes("-topmost", True)
+    _w, _h = 392, 306
+    win.geometry("%dx%d+%d+%d" % (_w, _h, root.winfo_screenwidth() // 2 - _w // 2,
+                                  root.winfo_screenheight() // 2 - _h // 2))
+
+    def label(text, fg=None, size=9, bold=False):
+        lb = tk.Label(win, text=text, bg=UI["bg"], fg=fg or UI["dim"],
+                      font=(FONT, size, "bold" if bold else "normal"), justify="left")
+        lb.pack(anchor="w", padx=20, pady=(6, 0))
+        return lb
+
+    label("\u672c\u673a\u673a\u5668\u7801", UI["muted"], 9)
+    code_row = tk.Frame(win, bg=UI["bg"]); code_row.pack(anchor="w", padx=20, pady=(2, 0))
+    code = tk.Label(code_row, text=info["machine"], bg=UI["card"], fg=UI["text"],
+                    font=("Consolas", 12, "bold"), padx=10, pady=6)
+    code.pack(side="left")
+
+    def do_copy():
+        try:
+            root.clipboard_clear(); root.clipboard_append(info["machine"])
+            tip.configure(text="\u5df2\u590d\u5236")
+        except Exception:
+            pass
+    tk.Button(code_row, text="\u590d\u5236", command=do_copy, relief="flat", bg=UI["card2"],
+              fg=UI["text"], font=(FONT, 8), padx=8).pack(side="left", padx=(6, 0))
+
+    if info.get("ok"):
+        why = {"trial": "\u8bd5\u7528\u4e2d", "local": "\u5df2\u6fc0\u6d3b\uff08\u672c\u5730\uff09",
+               "server": "\u5df2\u6fc0\u6d3b"}.get(info.get("reason"), "\u53ef\u7528")
+        label(f"{why} \u00b7 \u5269\u4f59 {info.get('days_left', 0)} \u5929", UI["green"], 10, True)
+    else:
+        label(f"\u672a\u6fc0\u6d3b\uff1a{info.get('reason', '')}", UI["red"], 10, True)
+
+    label("\u8f93\u5165\u6fc0\u6d3b\u7801\uff08SQA-XXXX-XXXX-XXXX\uff09", UI["muted"], 9)
+    ent = tk.Entry(win, width=28, bg=UI["card"], fg=UI["text"], insertbackground=UI["text"],
+                   relief="flat", font=("Consolas", 11))
+    ent.pack(anchor="w", padx=20, pady=(2, 0), ipady=5)
+    tip = tk.Label(win, text=f"\u670d\u52a1\u5668\uff1a{srv}", bg=UI["bg"], fg=UI["muted"], font=(FONT, 8))
+    tip.pack(anchor="w", padx=20, pady=(4, 0))
+    result = {"ok": bool(info.get("ok"))}
+
+    def do_activate():
+        key = ent.get().strip()
+        if not key:
+            tip.configure(text="\u5148\u586b\u6fc0\u6d3b\u7801", fg=UI["red"])
+            return
+        tip.configure(text="\u6b63\u5728\u6fc0\u6d3b\u2026", fg=UI["dim"])
+        win.update_idletasks()
+        res = licensing.activate(srv, key)
+        if res.get("ok"):
+            result["ok"] = True
+            cfg["license_key"] = key
+            try:
+                cfg_mod.save(cfg)
+            except Exception:
+                pass
+            tk.messagebox.showinfo("\u5b8c\u6210", f"\u5df2\u6fc0\u6d3b\uff0c\u5269\u4f59 {res.get('days_left', 0)} \u5929", parent=win)
+            win.destroy()
+        else:
+            tip.configure(text=f"\u5931\u8d25\uff1a{res.get('error')}", fg=UI["red"])
+
+    btns = tk.Frame(win, bg=UI["bg"]); btns.pack(fill="x", padx=20, pady=14)
+    tk.Button(btns, text="\u6fc0\u6d3b", command=do_activate, relief="flat", bg=UI["accent"],
+              fg="#ffffff", font=(FONT, 10, "bold"), padx=18, pady=6).pack(side="left")
+    tk.Button(btns, text="\u7a0d\u540e" if result["ok"] else "\u9000\u51fa", command=win.destroy,
+              relief="flat", bg=UI["card2"], fg=UI["text"], font=(FONT, 9), padx=14, pady=6
+              ).pack(side="right")
+    win.transient(root)
+    win.grab_set()
+    root.wait_window(win)
+    return bool(result["ok"])
+
+
+def license_gate(root, cfg):
+    if not cfg.get("license_required"):
+        return True
+    import licensing
+    srv = str(cfg.get("license_server") or licensing.DEFAULT_SERVER).rstrip("/")
+    info = licensing.status(srv)
+    if info.get("ok"):
+        return True
+    return license_dialog(root, cfg, info)
+
+
 def main():
     try:  # 必须在 tk.Tk() 之前：否则 Tk 用虚拟化坐标，窗口贴不到右下角
         import capture as _cap
@@ -4520,7 +4625,14 @@ def main():
         pass
     if args.auto_cont:
         root.after(900, app.start_continuous)
-    root.mainloop()
+    try:
+        _lc = cfg_mod.load()
+        if _lc.get("license_required") and not license_gate(root, _lc):
+            root.destroy()
+            return 0
+    except Exception as _exc:  # noqa: BLE001
+        print("license gate skipped:", _exc)
+    root.mainloop()  # _LIC_GATE_HOOKED
 
 
 def _fatal_popup(text: str) -> None:
