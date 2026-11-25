@@ -180,6 +180,21 @@
   }
   footer .right{margin-left:auto}
 
+
+  /* ---------- 顶部滚动进度条 ---------- */
+  .progress{position:fixed; top:0; left:0; right:0; height:2px; z-index:9; pointer-events:none}
+  .progress i{display:block; height:100%; width:100%; transform:scaleX(var(--p,0));
+    transform-origin:0 50%;
+    background:linear-gradient(90deg,#4d9dff,#a78bfa 55%,#3ddc84);
+    box-shadow:0 0 14px rgba(120,180,255,.75)}
+  /* 支持滚动驱动动画的浏览器：纯 CSS 跟随滚动，不依赖 JS */
+  @supports (animation-timeline: scroll()) {
+    .progress i{transform:none; animation:grow linear both; animation-timeline:scroll(root block)}
+    @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+  }
+  /* ---------- Hero 视差 ---------- */
+  .hero-inner{will-change:transform,opacity}
+
   /* ---------- 滚动入场 ---------- */
   .reveal{opacity:0; transform:translateY(16px);
           transition:opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1)}
@@ -199,6 +214,7 @@
 </style>
 </head>
 <body>
+<div class="progress"><i></i></div>
 <div class="mesh"></div>
 <div class="spot"></div>
 <div class="grain"></div>
@@ -216,7 +232,7 @@
   </header>
 
   <main>
-    <section class="hero">
+    <section class="hero"><div class="hero-inner">
       <p class="eyebrow reveal"><i></i>Personal site</p>
       <h1 class="reveal"><span class="grad">把重复劳动</span><br class="br">交给机器。
         <small>COS-107 Fall 2026 · 正在学 Python，顺便把作业里那些"重复看一眼 → 手敲一遍"的事写成程序。</small>
@@ -228,6 +244,7 @@
       <div class="cta reveal">
         <a class="btn primary" href="https://q.wuyolo.com" target="_blank" rel="noopener">打开答题工具 →</a>
         <a class="btn" href="#work">看看我在做什么</a>
+      </div>
       </div>
     </section>
 
@@ -321,6 +338,34 @@
       el.style.transitionDelay = Math.min(i * 70, 320) + 'ms';
       io.observe(el);
     });
+  }
+
+  // 4) 顶部进度条 + Hero 视差
+  var bar = document.querySelector('.progress i');
+  var hero = document.querySelector('.hero-inner');
+  var ticking = false;
+  function onScroll() {
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    var pct = max > 0 ? (h.scrollTop / max) * 100 : 0;
+    if (bar) bar.style.setProperty('--p', (pct / 100).toFixed(4));
+    if (hero && !reduce) {
+      var y = Math.min(h.scrollTop, 620);
+      hero.style.transform = 'translate3d(0,' + (y * 0.16).toFixed(1) + 'px,0)';
+      hero.style.opacity = String(Math.max(0.25, 1 - y / 760));
+      hero.style.filter = y > 40 ? 'blur(' + Math.min(1.2, (y - 40) / 420).toFixed(2) + 'px)' : 'none';
+    }
+    ticking = false;
+  }
+  function ask() { if (!ticking) { ticking = true; requestAnimationFrame(onScroll); } }
+  addEventListener('scroll', ask, { passive: true });
+  addEventListener('resize', ask, { passive: true });
+  onScroll();
+
+  // 预览用：?demo=1 时把进度条与视差摆到 65%，方便截图核对
+  if (location.search.indexOf('demo=1') >= 0) {
+    if (bar) { bar.style.setProperty('--p', '0.65'); bar.style.animation = 'none'; }
+    if (hero) { hero.style.transform = 'translate3d(0,26px,0)'; hero.style.opacity = '0.92'; }
   }
 })();
 </script>
