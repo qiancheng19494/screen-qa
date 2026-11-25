@@ -2,58 +2,174 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>吴悠 · 个人主页</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>吴悠 · You Wu</title>
+<meta name="description" content="吴悠的个人主页：COS-107 学习记录，和几个把重复劳动交给机器的小工具。">
 <style>
-  :root{--bg:#0f1218;--card:#171c25;--line:#252c39;--text:#e7ebf2;--dim:#93a0b4;--accent:#4d9dff}
+  :root{
+    --bg:#0b0f15; --card:#111823; --line:#1e2836; --text:#e8eef8;
+    --dim:#9aa8bd; --muted:#6b7a90; --accent:#4d9dff; --green:#3ddc84;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-       font:16px/1.65 "Segoe UI","Microsoft YaHei UI",system-ui,sans-serif}
-  .wrap{max-width:820px;margin:0 auto;padding:64px 22px 80px}
-  h1{font-size:40px;margin:0 0 6px;letter-spacing:-.5px}
-  .sub{color:var(--dim);margin:0 0 26px}
-  .accent{color:var(--accent)}
-  .bar{height:2px;background:linear-gradient(90deg,var(--accent),transparent);margin:26px 0 34px}
-  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px}
-  .card h2{font-size:15px;margin:0 0 8px;color:var(--accent);font-weight:600}
-  .card p{margin:0;color:var(--dim);font-size:14px}
-  ul{margin:8px 0 0;padding-left:18px;color:var(--dim);font-size:14px}
-  a{color:var(--accent);text-decoration:none}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:16px/1.65 "Microsoft YaHei UI","Segoe UI",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  }
+  a{color:var(--accent); text-decoration:none}
   a:hover{text-decoration:underline}
-  footer{margin-top:44px;color:#6d7a8d;font-size:13px}
+  .wrap{max-width:920px; margin:0 auto; padding:0 24px}
+  /* 顶部光晕 */
+  .glow{
+    position:fixed; top:-260px; left:50%; transform:translateX(-50%);
+    width:900px; height:520px; pointer-events:none; z-index:0;
+    background:radial-gradient(circle at 50% 50%, rgba(77,157,255,.20), rgba(77,157,255,0) 62%);
+    filter:blur(12px);
+  }
+  header{position:relative; z-index:1; display:flex; align-items:center; gap:14px; padding:26px 0 6px}
+  .mono{
+    width:40px; height:40px; border-radius:12px; flex:0 0 auto;
+    background:linear-gradient(140deg,#1b3a63,#0f1c2e);
+    border:1px solid #24405f; display:grid; place-items:center;
+    font-weight:700; letter-spacing:.5px; color:#cfe4ff; font-size:15px;
+  }
+  .brand strong{display:block; font-size:15px; letter-spacing:.3px}
+  .brand span{display:block; font-size:12px; color:var(--muted)}
+  nav{margin-left:auto; display:flex; gap:18px; font-size:14px}
+  nav a{color:var(--dim)}
+  nav a:hover{color:var(--text); text-decoration:none}
+
+  main{position:relative; z-index:1}
+  .hero{padding:54px 0 34px}
+  .eyebrow{color:var(--green); font-size:13px; letter-spacing:2px; text-transform:uppercase; margin:0 0 14px}
+  h1{font-size:52px; line-height:1.12; margin:0 0 16px; letter-spacing:-1px}
+  h1 small{display:block; font-size:17px; color:var(--muted); letter-spacing:0; margin-top:12px; font-weight:400}
+  .lead{font-size:17px; color:var(--dim); max-width:620px; margin:0 0 26px}
+  .cta{display:flex; flex-wrap:wrap; gap:12px}
+  .btn{
+    display:inline-flex; align-items:center; gap:8px; padding:11px 18px; border-radius:12px;
+    border:1px solid var(--line); background:var(--card); color:var(--text);
+    font-size:14px; transition:transform .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .btn:hover{transform:translateY(-2px); border-color:#2f4a6b; text-decoration:none}
+  .btn.primary{background:linear-gradient(140deg,#2f7fe0,#1d5fb5); border-color:#3f8ae8}
+  .btn.primary:hover{background:linear-gradient(140deg,#3a8cf0,#2569c4)}
+
+  .grid{display:grid; grid-template-columns:1.35fr 1fr; gap:18px; margin:26px 0 10px}
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:18px; padding:22px 22px 20px;
+    transition:transform .18s ease, border-color .18s ease;
+  }
+  .card:hover{transform:translateY(-3px); border-color:#2b3f59}
+  .card h2{font-size:13px; letter-spacing:1.6px; text-transform:uppercase; color:var(--muted); margin:0 0 14px}
+  .card p{margin:0 0 12px; color:var(--dim); font-size:15px}
+  .card p:last-child{margin-bottom:0}
+  .proj-title{font-size:18px; font-weight:600; margin:0 0 6px; color:var(--text)}
+  .tags{display:flex; flex-wrap:wrap; gap:7px; margin:14px 0 4px}
+  .tag{
+    font-size:12px; padding:4px 9px; border-radius:999px;
+    background:#16202e; border:1px solid #22303f; color:#9fb2c8;
+  }
+  .links{list-style:none; padding:0; margin:12px 0 0; font-size:14px}
+  .links li{padding:7px 0; border-bottom:1px dashed #1b2532; color:var(--dim)}
+  .links li:last-child{border-bottom:0}
+  .links span{color:var(--muted); display:inline-block; min-width:66px}
+  .links span.dot{min-width:0}
+  .dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green); margin-right:8px; vertical-align:1px}
+
+  footer{position:relative; z-index:1; margin:44px 0 40px; padding-top:20px; border-top:1px solid var(--line);
+         display:flex; flex-wrap:wrap; gap:10px; color:var(--muted); font-size:13px}
+  footer .right{margin-left:auto}
+  @media (max-width:760px){
+    .grid{grid-template-columns:1fr}
+    h1{font-size:38px}
+    .hero{padding:36px 0 22px}
+    nav{gap:12px; font-size:13px}
+  }
 </style>
 </head>
 <body>
+<div class="glow" id="top"></div>
+
 <div class="wrap">
-  <h1>吴悠</h1>
-  <p class="sub">COS-107 · Fall 2026 · <span class="accent">Prob Solving, Logic &amp; Design</span></p>
-  <div class="bar"></div>
+  <header>
+    <div class="mono">YW</div>
+    <div class="brand"><strong>吴悠</strong><span>You Wu · Kentucky State University</span></div>
+    <nav>
+      <a href="#about">关于</a>
+      <a href="#work">在做</a>
+      <a href="#contact">联系</a>
+      <a href="https://github.com/qiancheng19494" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
 
-  <div class="grid">
-    <div class="card">
-      <h2>关于</h2>
-      <p>这里写两句自我介绍：在学什么、在做什么、关心什么。<br>
-      <!-- TODO: 改成你自己的话 --></p>
-    </div>
-    <div class="card">
-      <h2>项目</h2>
-      <ul>
-        <li><a href="https://q.wuyolo.com/">屏幕问答 · 网页版</a>（截图读题 → 作答）</li>
-        <li><a href="https://github.com/qiancheng19494/screen-qa">screen-qa</a>（Windows 桌面版）</li>
-        <!-- TODO: 加你自己的项目 -->
-      </ul>
-    </div>
-    <div class="card">
-      <h2>联系</h2>
-      <p>邮箱：<a href="mailto:you@wuyolo.com">you@wuyolo.com</a><br>
-      GitHub：<a href="https://github.com/qiancheng19494">qiancheng19494</a><br>
-      <!-- TODO: 换成真实联系方式 --></p>
-    </div>
-  </div>
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Personal site</p>
+      <h1>把重复劳动交给机器。<small>COS-107 Fall 2026 · 正在学 Python，顺便把作业里那些"重复看一眼 → 手敲一遍"的事写成程序。</small></h1>
+      <p class="lead">
+        这是我的一小块自留地：放正在做的项目、踩过的坑，和一个我自己每天在用的
+        截屏问答工具。技术栈很朴素——Python、标准库、一台最便宜的云服务器。
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://q.wuyolo.com" target="_blank" rel="noopener">打开答题工具 →</a>
+        <a class="btn" href="#work">看看我在做什么</a>
+      </div>
+    </section>
 
-  <footer>© <span id="y"></span> wuyolo.com · 用 Caddy + Docker 部署在 Azure</footer>
+    <section class="grid">
+      <article class="card" id="work">
+        <h2>在做的事</h2>
+        <p class="proj-title">屏幕问答 · Screen QA</p>
+        <p>
+          按下快捷键框住一道题，程序读图 → 交给大模型推理 → 直接给你能粘贴的答案。
+          带代入验算、置信度分级、错题本，离线也能跑本地 OCR。
+        </p>
+        <p style="font-size:13px;color:var(--muted)">
+          桌面版在 Windows 上跑；网页版就是这台服务器上的
+          <a href="https://q.wuyolo.com" target="_blank" rel="noopener">q.wuyolo.com</a>。
+        </p>
+        <div class="tags">
+          <span class="tag">Python</span><span class="tag">Tk / WebView2</span>
+          <span class="tag">RapidOCR</span><span class="tag">DeepSeek</span>
+          <span class="tag">FastAPI 风格标准库</span><span class="tag">Docker</span>
+          <span class="tag">Caddy</span><span class="tag">Azure</span>
+        </div>
+        <ul class="links">
+          <li><span>源码</span><a href="https://github.com/qiancheng19494/screen-qa" target="_blank" rel="noopener">github.com/qiancheng19494/screen-qa</a></li>
+          <li><span>在线版</span><a href="https://q.wuyolo.com" target="_blank" rel="noopener">q.wuyolo.com</a></li>
+        </ul>
+      </article>
+
+      <div>
+        <article class="card" id="about" style="margin-bottom:18px">
+          <h2>关于</h2>
+          <p>
+            在 Kentucky State University 上 COS-107（Problem Solving &amp; Logic Design）。
+            喜欢把"手动重复"的东西写成脚本，也喜欢把做过的东西留在网上，方便下次翻。
+          </p>
+          <p style="font-size:13px;color:var(--muted)">
+            最近在学：Python 数据结构 · 调试方法 · 一点 Web 后端。
+          </p>
+        </article>
+
+        <article class="card" id="contact">
+          <h2>联系</h2>
+          <ul class="links">
+            <li><span>邮箱</span><a href="mailto:you@wuyolo.com">you@wuyolo.com</a></li>
+            <li><span>GitHub</span><a href="https://github.com/qiancheng19494" target="_blank" rel="noopener">qiancheng19494</a></li>
+            <li><span>状态</span><span class="dot"></span>本页跑在我自己的服务器上</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div>© 2026 吴悠 · You Wu</div>
+    <div class="right">Caddy + Docker on Azure · <a href="#top">回到顶部</a></div>
+  </footer>
 </div>
-<script>document.getElementById('y').textContent = new Date().getFullYear();</script>
 </body>
 </html>
