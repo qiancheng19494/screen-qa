@@ -31,7 +31,10 @@ fi
 
 log "3/7 拉取代码到 $DIR"
 if [ -d "$DIR/.git" ]; then
-  git -C "$DIR" pull -q
+  # 丢弃服务器上的本地改动（例如手改过脚本），确保和仓库一致
+  git -C "$DIR" fetch -q --all || true
+  git -C "$DIR" reset -q --hard origin/HEAD || git -C "$DIR" reset -q --hard origin/main || true
+  echo "已同步到仓库最新版本"
 else
   mkdir -p "$(dirname "$DIR")"
   git clone -q --depth 1 "$REPO" "$DIR"
