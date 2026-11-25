@@ -16,6 +16,14 @@
   .wrap{max-width:760px;margin:0 auto;padding:22px 16px 60px}
   h1{font-size:20px;margin:0 0 4px}
   .sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+  .chip{background:var(--card);border:1px solid var(--line);color:var(--fg);
+        border-radius:999px;padding:7px 14px;font-size:13px;cursor:pointer}
+  .chip:hover{border-color:var(--accent);color:var(--accent)}
+  .hitem{padding:9px 0;border-top:1px solid var(--line);cursor:pointer}
+  .hitem:first-child{border-top:0}
+  .hitem b{font-weight:600;font-size:14px}
+  .hitem .sub{margin:2px 0 0}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
   textarea{width:100%;min-height:110px;background:#0d1117;color:var(--tx);border:1px solid var(--line);
            border-radius:8px;padding:10px;font:14px/1.5 inherit;resize:vertical}
@@ -62,6 +70,13 @@
     </div>
   </div>
 
+  <div class="chips" id="samples">
+    <span class="sub" style="margin:0 8px 0 0">试试：</span>
+    <button class="chip" data-q="Solve for x.  9x + 6 = 60">解方程</button>
+    <button class="chip" data-q="Simplify the expression: (x^2 - 9) / (x - 3)">化简</button>
+    <button class="chip" data-q="In Python, the ___ character is used to create a comment.">填空</button>
+  </div>
+
   <div class="card" id="statCard" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:baseline">
       <b>我的用量</b><span class="sub" id="statMsg" style="margin:0"></span>
@@ -77,10 +92,18 @@
     <pre id="why"></pre>
   </div>
 
-  <div class="sub">隐私：题目文字会发给模型服务；服务器不保存题目正文，只记 用量（题数/token/费用）。</div>
+  <div class="card" id="histCard" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <b>最近作答</b><span class="sub" id="histMsg" style="margin:0"></span>
+    </div>
+    <div id="histList" style="margin-top:8px"></div>
+  </div>
+
+  <div class="sub">隐私：题目文字会发给模型服务；服务器只保存你自己账号下的作答记录（可删除），不用于训练。</div>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
+bindSamples();
 let token = localStorage.getItem("sqa_token") || "";
 const H = () => token ? {"Authorization": "Bearer " + token} : {};
 
@@ -88,7 +111,7 @@ $("btnLogin").onclick = async () => {
   const r = await fetch("/api/login", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({name:$("name").value, password:$("pw").value})});
   const j = await r.json();
-  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats();
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats(); loadHistory();
     $("authMsg").textContent = "已登录：" + j.user.name; }
   else $("authMsg").textContent = j.error || "登录失败";
 };
@@ -96,7 +119,7 @@ $("btnReg").onclick = async () => {
   const r = await fetch("/api/register", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({name:$("name").value, password:$("pw").value})});
   const j = await r.json();
-  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats();
+  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats(); loadHistory();
     $("authMsg").textContent = "注册成功：" + j.user.name; }
   else $("authMsg").textContent = j.error || "注册失败";
 };
@@ -153,6 +176,37 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 }
 
+function bindSamples(){
+  document.querySelectorAll("#samples .chip").forEach(b => {
+    b.onclick = () => { $("q").value = b.dataset.q; $("q").focus(); };
+  });
+  $("q").addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); if ($("q").value.trim()) solveText($("q").value.trim()); }
+  });
+}
+
+async function loadHistory(){
+  if (!token) return;
+  const r = await fetch("/api/history?limit=10", {headers: H()});
+  if (r.status === 401) return;
+  const j = await r.json();
+  const items = j.items || [];
+  $("histCard").style.display = "block";
+  $("histMsg").textContent = items.length ? (items.length + " 条") : "还没有记录";
+  $("histList").innerHTML = items.map((it, i) => {
+    const t = (it.text || "").replace(/</g, "&lt;").slice(0, 70);
+    const a = (it.answer || "").replace(/</g, "&lt;").slice(0, 40);
+    return `<div class="hitem" data-i="${i}"><b>${a || "(无答案)"}</b><div class="sub">${t}</div></div>`;
+  }).join("");
+  document.querySelectorAll("#histList .hitem").forEach(el => {
+    el.onclick = () => { const it = items[Number(el.dataset.i)]; if (!it) return;
+      $("q").value = it.text || ""; $("outCard").style.display = "block";
+      $("ans").textContent = it.answer || ""; $("fill").textContent = it.fill ? ("填入答案：" + it.fill) : "";
+      $("why").textContent = ""; $("meta").innerHTML = `<span class="tag">历史记录</span>`;
+      $("q").scrollIntoView({behavior:"smooth", block:"center"}); };
+  });
+}
+
 async function loadStats() {
   if (!token) return;
   const r = await fetch("/api/stats", {headers: H()});
@@ -175,7 +229,7 @@ async function loadStats() {
   $("statAxis").innerHTML = "<span>" + (daily[0] ? daily[0].date.slice(5) : "") + "</span><span>近 30 天花费</span><span>" +
     (daily.length ? daily[daily.length - 1].date.slice(5) : "") + "</span>";
 }
-if (token) loadStats();
+if (token) loadStats(); loadHistory();
 </script>
 </body>
 </html>

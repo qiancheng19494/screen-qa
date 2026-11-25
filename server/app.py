@@ -202,6 +202,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("index.html")
         if path.startswith("/static/"):
             return self._static(path[len("/static/"):])
+        if path == "/api/history":
+            u = self._user()
+            if not u:
+                return self._json({"error": "未登录"}, 401)
+            q = parse_qs(urlparse(self.path).query)
+            limit = max(1, min(100, int((q.get("limit") or ["30"])[0] or 30)))
+            rows = store.pull_records(int(u["id"]), "records", 0.0, limit)
+            items = []
+            for r in rows:
+                try:
+                    import json as _json
+                    items.append(_json.loads(r["payload"]))
+                except Exception:  # noqa: BLE001
+                    continue
+            items.sort(key=lambda x: x.get("ts") or 0, reverse=True)
+            return self._json({"items": items[:limit], "count": len(items)})
         if path == "/api/me":
             u = self._user()
             if not u:
@@ -364,6 +380,18 @@ class Handler(BaseHTTPRequestHandler):
         pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
         if u:
             store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
+            try:
+                import hashlib as _hl
+                import json as _json
+                import time as _t
+                rec = {"text": text[:500], "answer": (ans.group(1).strip() if ans else "")[:300],
+                       "fill": (fill.group(1).strip() if fill else "")[:200],
+                       "model": model, "pt": pt, "ct": ct, "ts": _t.time()}
+                store.push_records(int(u["id"]), "records", [{
+                    "uid": _hl.sha1((str(_t.time()) + text).encode()).hexdigest()[:16],
+                    "ts": rec["ts"], "payload": _json.dumps(rec, ensure_ascii=False)}])
+            except Exception:  # noqa: BLE001
+                pass
         return self._json({"answer": (ans.group(1).strip() if ans else content[:400]),
                            "fill": (fill.group(1).strip() if fill else ""),
                            "reasoning": content,
