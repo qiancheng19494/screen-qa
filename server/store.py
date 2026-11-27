@@ -138,6 +138,23 @@ def add_usage(uid: int, model: str, pt: int, ct: int, cost: float) -> None:
                     (uid, time.time(), model, pt, ct, cost))
 
 
+def charge_usage(uid: int, model: str, pt: int, ct: int, cost: float) -> None:
+    """记录一次真实用量，并把 token 数计入当天的按天限额。
+
+    与 add_usage 的区别：同时累加 users.used_tokens，使 take_quota()
+    的剩余额度（以及 /api/me 的今日用量）真实生效。
+    """
+    today = time.strftime("%Y-%m-%d")
+    tokens = max(0, int(pt) + int(ct))
+    with connect() as con:
+        con.execute("INSERT INTO usage(user_id, ts, model, pt, ct, cost) VALUES(?,?,?,?,?,?)",
+                    (uid, time.time(), model, pt, ct, cost))
+        row = con.execute("SELECT used_date, used_tokens FROM users WHERE id=?", (uid,)).fetchone()
+        used = int(row["used_tokens"]) if row and row["used_date"] == today else 0
+        con.execute("UPDATE users SET used_date=?, used_tokens=? WHERE id=?",
+                    (today, used + tokens, uid))
+
+
 def stats(uid: int) -> dict:
     today = time.strftime("%Y-%m-%d")
     with connect() as con:

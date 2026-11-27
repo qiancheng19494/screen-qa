@@ -366,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": {"message": detail}}, exc.code)
             usage = out.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
-            store.add_usage(int(u["id"]), str(b.get("model") or ""), pt, ct, _cost(pt, ct))
+            store.charge_usage(int(u["id"]), str(b.get("model") or ""), pt, ct, _cost(pt, ct))
             return self._json({"id": "sqa", "choices": [{"index": 0, "message":
                                {"role": "assistant", "content": out.get("content") or ""},
                                "finish_reason": "stop"}], "usage": usage})
@@ -390,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             usage = out.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
-            store.add_usage(int(u["id"]), str(b.get("model") or ""), pt, ct, _cost(pt, ct))
+            store.charge_usage(int(u["id"]), str(b.get("model") or ""), pt, ct, _cost(pt, ct))
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
         try:
@@ -426,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
         usage = out.get("usage") or {}
         pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
         if u:
-            store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
+            store.charge_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
             try:
                 import hashlib as _hl
                 import json as _json
@@ -537,7 +537,7 @@ class Handler(BaseHTTPRequestHandler):
         pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
         if u:
             try:
-                store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
+                store.charge_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
                 self._save_record(u, text, answer, fill, model, pt, ct)
             except Exception:  # noqa: BLE001
                 pass
@@ -565,7 +565,7 @@ class Handler(BaseHTTPRequestHandler):
             usage = out.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
             if u:
-                store.add_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
+                store.charge_usage(int(u["id"]), model, pt, ct, _cost(pt, ct))
                 self._save_record(u, q, answer, fill, model, pt, ct)
             items.append({"text": q[:300], "answer": answer, "fill": fill,
                           "reasoning": content[:1500], "cost": round(_cost(pt, ct), 6)})
