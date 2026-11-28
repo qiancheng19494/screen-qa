@@ -203,6 +203,8 @@ class Handler(BaseHTTPRequestHandler):
                                "daily": store.daily_usage(int(u["id"]), 30)})
         if path in ("/", "/index.html"):
             return self._static("index.html")
+        if path == "/admin":
+            return self._static("admin.html")
         if path.startswith("/static/"):
             return self._static(path[len("/static/"):])
         if path == "/api/errors":
@@ -256,6 +258,35 @@ class Handler(BaseHTTPRequestHandler):
             if licensing is None:
                 return self._json({"error": "授权模块未部署"}, 503)
             return self._json({"licenses": licensing.list_licenses(200)})
+        if path in ("/api/admin/overview", "/api/admin/users", "/api/admin/export.csv"):
+            if not _admin_ok(self.headers.get("X-Admin-Token", "")
+                             or (parse_qs(urlparse(self.path).query).get("token") or [""])[0]):
+                return self._json({"error": "forbidden"}, 403)
+            qs = parse_qs(urlparse(self.path).query)
+            if path == "/api/admin/overview":
+                return self._json({"overview": store.admin_overview()})
+            if path == "/api/admin/users":
+                q = (qs.get("q") or [""])[0]
+                limit = int((qs.get("limit") or ["100"])[0] or 100)
+                offset = int((qs.get("offset") or ["0"])[0] or 0)
+                return self._json(store.admin_users(q, limit, offset))
+            rows = store.admin_export_rows()
+            cols = ["name", "status", "created_at", "quota_day", "used_today", "tokens_total",
+                    "cost_total", "records", "tokens", "last_used"]
+            import csv as _csv
+            import io as _io
+            buf = _io.StringIO()
+            w = _csv.DictWriter(buf, fieldnames=cols)
+            w.writeheader()
+            for r in rows:
+                w.writerow({k: r.get(k, "") for k in cols})
+            data = ("\ufeff" + buf.getvalue()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="sqa-users.csv"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            return self.wfile.write(data)
         if path == "/api/health":
             return self._json({"ok": True, "mock": MOCK, "upstream": UPSTREAM_BASE})
         return self._json({"error": "not found"}, 404)
@@ -306,6 +337,18 @@ class Handler(BaseHTTPRequestHandler):
                 k = licensing.new_key(days=days, note=str(b.get("note", ""))[:120],
                                       machine_limit=int(b.get("machines", 1) or 1))
                 return self._json({"key": k, "days": days})
+            if path in ("/api/admin/quota", "/api/admin/status", "/api/admin/revoke"):
+                if not _admin_ok(self.headers.get("X-Admin-Token", "")):
+                    return self._json({"error": "forbidden"}, 403)
+                b = self._body()
+                name = str(b.get("name", ""))
+                if path == "/api/admin/quota":
+                    err = store.admin_set_quota(name, b.get("quota_day", 0))
+                elif path == "/api/admin/status":
+                    err = store.admin_set_status(name, str(b.get("status", "")))
+                else:
+                    err = store.admin_revoke(name)
+                return self._json({"ok": True}) if not err else self._json({"error": err}, 400)
             if path == "/api/error":
                 u = self._user()
                 if not u:

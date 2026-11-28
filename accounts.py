@@ -22,6 +22,7 @@ ITER = 120_000
 
 # 登录窗自己的配色（不 import app，避免循环依赖）
 BG, CARD, BORDER = "#0a0c10", "#131820", "#232b38"
+WIN = "#080b10"
 TEXT, DIM, MUTED = "#e9ecf2", "#98a2b3", "#6a7486"
 ACCENT, RED, GREEN = "#4d9dff", "#ff6b6b", "#3ddc84"
 FONT = "Microsoft YaHei UI"
@@ -105,85 +106,278 @@ def delete(user: str, pw: str) -> str | None:
 
 
 def ask_login(root: tk.Tk) -> str | None:
-    """登录窗。返回用户名、游客返回 ""，点关闭返回 None。"""
+    """登录/注册窗（自绘卡片，深色 + 渐变 + Tab 切换）。返回用户名、游客返回 ""，关闭返回 None。"""
+    import math
+    import sys
+
     win = tk.Toplevel(root)
     win.title("屏幕问答 · 登录")
-    win.configure(bg=BG)
+    win.configure(bg=WIN)
     win.resizable(False, False)
-    win.attributes("-topmost", True)
-    w, h = 380, 398
+    try:
+        win.attributes("-topmost", True)
+    except tk.TclError:
+        pass
+    W, H = 440, 520
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-    win.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
+    win.geometry(f"{W}x{H}+{(sw - W) // 2}+{max(36, (sh - H) // 3)}")
+
+    ui_font = "Microsoft YaHei UI" if sys.platform == "win32" else "PingFang SC"
+    mono_like = ui_font
+
+    c = tk.Canvas(win, width=W, height=H, bg=WIN, highlightthickness=0, bd=0)
+    c.pack(fill="both", expand=True)
 
     result = {"user": None}
+    state = {"mode": "login"}
+    entries: dict[str, tk.Entry] = {}
 
-    tk.Label(win, text="屏幕问答", bg=BG, fg=TEXT,
-             font=(FONT, 16, "bold")).pack(anchor="w", padx=22, pady=(20, 2))
-    tk.Label(win, text="本机账号 · 数据只存在这台电脑", bg=BG, fg=MUTED,
-             font=(FONT, 9)).pack(anchor="w", padx=22)
+    # ---------- 小工具 ----------
+    def mix(c1: str, c2: str, t: float) -> str:
+        a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+        return "#" + "".join(f"{round(a[k] + (b[k] - a[k]) * t):02x}" for k in range(3))
 
-    form = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-    form.pack(fill="x", padx=22, pady=14)
+    def rr(x1, y1, x2, y2, r, **kw):
+        pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+               x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+        return c.create_polygon(pts, smooth=True, splinesteps=24, **kw)
 
-    def field(label: str, show: str | None = None) -> tk.Entry:
-        tk.Label(form, text=label, bg=CARD, fg=DIM,
-                 font=(FONT, 9)).pack(anchor="w", padx=14, pady=(10, 2))
-        e = tk.Entry(form, bg="#0d1117", fg=TEXT, insertbackground=TEXT,
-                     relief="flat", bd=0, highlightthickness=1,
-                     highlightbackground=BORDER, highlightcolor=ACCENT,
-                     font=(FONT, 10), show=show or "")
-        e.pack(fill="x", padx=14, ipady=5)
+    def rr_grad(x1, y1, x2, y2, r, c1, c2, steps=90, tag=""):
+        """圆角矩形内的竖向渐变（逐行画，两端按圆角收边）。"""
+        for i in range(steps):
+            t = i / max(1, steps - 1)
+            y = y1 + (y2 - y1) * t
+            dy_top, dy_bot = y - y1, y2 - y
+            inset = 0.0
+            if dy_top < r:
+                inset = r - math.sqrt(max(0.0, r * r - (r - dy_top) ** 2))
+            if dy_bot < r:
+                inset = max(inset, r - math.sqrt(max(0.0, r * r - (r - dy_bot) ** 2)))
+            c.create_line(x1 + inset, y, x2 - inset, y, fill=mix(c1, c2, t), tags=tag)
+
+    def rrect_outline(x1, y1, x2, y2, r, color, width=1, tag=""):
+        return rr(x1, y1, x2, y2, r, fill="", outline=color, width=width, tags=tag)
+
+    # ---------- 背景 / 卡片 ----------
+    rr_grad(24, 26, 416, 500, 20, "#141c28", "#0f1620")
+    rrect_outline(24, 26, 416, 500, 20, "#26313f")
+
+    rr(26, 28, 414, 498, 19, fill="#101722", outline="")
+    rr_grad(26, 28, 414, 498, 19, "#161f2d", "#0e141d")
+    # 顶部一条很淡的蓝色渐光线，代替高光
+    for i in range(180):
+        t = i / 179
+        x0 = 48 + (392 - 48) * t
+        c.create_line(x0, 28.5, x0 + 1, 28.5,
+                      fill=mix("#141f2f", "#2a4766", abs(t - 0.5) * 2), width=1)
+
+    # ---------- Logo ----------
+    rr_grad(48, 52, 96, 100, 14, "#6fb4ff", "#2f6fd0")
+    rrect_outline(48, 52, 96, 100, 14, "#8ec3ff", width=1)
+    # 屏幕图标（白色描边）
+    c.create_line(60, 68, 84, 68, fill="#ffffff", width=2, capstyle="round")
+    c.create_line(60, 68, 60, 82, fill="#ffffff", width=2, capstyle="round")
+    c.create_line(60, 82, 84, 82, fill="#ffffff", width=2, capstyle="round")
+    c.create_line(84, 68, 84, 82, fill="#ffffff", width=2, capstyle="round")
+    c.create_line(72, 86, 72, 90, fill="#ffffff", width=2, capstyle="round")
+    c.create_text(72, 77, text="?", fill="#0b2a4d", font=(ui_font, 10, "bold"))
+
+    c.create_text(112, 62, text="屏幕问答", anchor="w", fill="#eaf1fb",
+                  font=(ui_font, 17, "bold"))
+    c.create_text(112, 86, text="本机账号 · 数据只留在这台电脑", anchor="w", fill="#8b97a9",
+                  font=(ui_font, 9))
+
+    # ---------- Tab ----------
+    tabs = {"login": (52, 128, 218, 168), "register": (222, 128, 388, 168)}
+    c.create_polygon([56, 128, 214, 128, 218, 132, 218, 164, 214, 168, 56, 168,
+                      52, 164, 52, 132], smooth=True, fill="#0b121b", outline="#26313f")
+    tab_items = {}
+
+    def draw_tabs():
+        for name, box in tabs.items():
+            x1, y1, x2, y2 = box
+            for it in tab_items.pop(name, []):
+                c.delete(it)
+            on = state["mode"] == name
+            if on:
+                rr_grad(x1, y1, x2, y2, 9, "#2f5f9e", "#24476f")
+                rrect_outline(x1, y1, x2, y2, 9, "#4d8fd6")
+            color = "#eaf4ff" if on else "#8b97a9"
+            it = c.create_text((x1 + x2) / 2, (y1 + y2) / 2,
+                               text="登录" if name == "login" else "注册",
+                               fill=color, font=(ui_font, 12, "bold"))
+            tab_items[name] = [it]
+            c.tag_bind(it, "<Button-1>", lambda _e, n=name: set_mode(n))
+            hit = c.create_rectangle(x1, y1, x2, y2, fill="", outline="", tags=("tabhit", name))
+            c.tag_bind(hit, "<Button-1>", lambda _e, n=name: set_mode(n))
+            c.tag_bind(hit, "<Enter>", lambda _e, n=name: c.configure(cursor="hand2"))
+            c.tag_bind(it, "<Enter>", lambda _e, n=name: c.configure(cursor="hand2"))
+            c.tag_bind(it, "<Leave>", lambda _e, n=name: c.configure(cursor=""))
+
+    # ---------- 输入框 ----------
+    def make_field(y: int, key: str, label: str, icon: str) -> tk.Entry:
+        x1, x2 = 48, 392
+        c.create_text(x1 + 2, y - 12, text=label, anchor="w", fill="#8b97a9",
+                      font=(ui_font, 9))
+        box = rr(x1, y, x2, y + 46, 11, fill="#0c131d", outline="#2a3646", width=1)
+        # 左侧图标（矢量）
+        ix, iy = x1 + 22, y + 23
+        if icon == "user":
+            c.create_oval(ix - 5, iy - 10, ix + 5, iy, outline="#7f8ea6", width=1.6)
+            c.create_arc(ix - 9, iy - 1, ix + 9, iy + 17, start=0, extent=180,
+                         style="arc", outline="#7f8ea6", width=1.6)
+        else:
+            c.create_rectangle(ix - 8, iy - 4, ix + 8, iy + 9, outline="#7f8ea6", width=1.6)
+            c.create_arc(ix - 5, iy - 12, ix + 5, iy - 1, start=0, extent=180,
+                         style="arc", outline="#7f8ea6", width=1.6)
+        e = tk.Entry(win, bg="#0c131d", fg=TEXT, insertbackground=TEXT, relief="flat",
+                     bd=0, highlightthickness=0, font=(ui_font, 12),
+                     show="●" if key == "pw" else "")
+        c.create_window(x1 + 46, y + 23, window=e, width=252, height=24, anchor="w")
+        e.bind("<FocusIn>", lambda _e, b=box: c.itemconfigure(b, outline="#4d9dff"))
+        e.bind("<FocusOut>", lambda _e, b=box: c.itemconfigure(b, outline="#2a3646"))
+        e.bind("<Return>", lambda _e: submit())
+        entries[key] = e
         return e
 
-    e_user = field("用户名")
-    e_pw = field("密码", "●")
-    tip = tk.Label(form, text="", bg=CARD, fg=RED, font=(FONT, 8),
-                   wraplength=300, justify="left")
-    tip.pack(anchor="w", padx=14, pady=(6, 10))
+    make_field(190, "user", "用户名", "user")
+    make_field(262, "pw", "密码", "lock")
 
-    btns = tk.Frame(win, bg=BG)
-    btns.pack(fill="x", padx=22)
+    # 眼睛（显示/隐藏密码）
+    eye = {"on": False}
 
-    def make(text: str, cmd, color=ACCENT, dark_text=True):
-        b = tk.Label(btns, text=text, bg=color, fg="#0a0c10" if dark_text else TEXT,
-                     font=(FONT, 10, "bold"), padx=12, pady=6, cursor="hand2")
-        b.bind("<Button-1>", lambda _e: cmd())
-        return b
+    def draw_eye():
+        for tag in ("eyeOpen", "eyeClosed"):
+            c.delete(tag)
+        x, y = 368, 285
+        if eye["on"]:
+            c.create_oval(x - 10, y - 6, x + 10, y + 6, outline="#8fb9f0", width=1.5, tags="eyeOpen")
+            c.create_oval(x - 3, y - 3, x + 3, y + 3, fill="#8fb9f0", outline="", tags="eyeOpen")
+        else:
+            c.create_oval(x - 10, y - 6, x + 10, y + 6, outline="#7f8ea6", width=1.5, tags="eyeClosed")
+            c.create_line(x - 9, y - 6, x + 9, y + 6, fill="#7f8ea6", width=1.5, tags="eyeClosed")
 
-    def do_login():
-        u, p = e_user.get().strip(), e_pw.get()
+    def toggle_eye(_e=None):
+        eye["on"] = not eye["on"]
+        try:
+            entries["pw"].configure(show="" if eye["on"] else "●")
+        except tk.TclError:
+            pass
+        draw_eye()
+
+    c.tag_bind("eyeOpen", "<Button-1>", toggle_eye)
+    c.tag_bind("eyeClosed", "<Button-1>", toggle_eye)
+    draw_eye()
+
+    # ---------- 提示 / 主按钮 / 游客 ----------
+    tip = c.create_text(220, 322, text="", fill=RED, font=(ui_font, 9), width=344)
+
+    btn = {}
+    btn_items = {}
+
+    def draw_button():
+        x1, y1, x2, y2 = 48, 336, 392, 384
+        for it in btn_items.pop("all", []):
+            c.delete(it)
+        hot = btn.get("hot", False)
+        rr_grad(x1, y1, x2, y2, 12,
+                "#79baff" if hot else "#6fb4ff", "#2f7df6" if not hot else "#3b8cff")
+        rrect_outline(x1, y1, x2, y2, 12, "#9ccbff", width=1)
+        label = "登录" if state["mode"] == "login" else "创建账号"
+        hit = c.create_rectangle(x1, y1, x2, y2, fill="", outline="", tags="btnhit")
+        txt = c.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=label, fill="#06101f",
+                            font=(ui_font, 12, "bold"))
+        btn_items["all"] = [hit, txt]
+        c.tag_raise("btnhit")
+        for it in btn_items["all"]:
+            c.tag_bind(it, "<Button-1>", lambda _e: submit())
+            c.tag_bind(it, "<Enter>", lambda _e: (btn.update(hot=True), draw_button(),
+                                                  c.configure(cursor="hand2")))
+            c.tag_bind(it, "<Leave>", lambda _e: (btn.update(hot=False), draw_button(),
+                                                  c.configure(cursor="")))
+
+    guest = c.create_text(220, 414, text="游客进入（数据留在根目录）", fill="#7f8ea6",
+                          font=(ui_font, 9))
+    c.tag_bind(guest, "<Button-1>", lambda _e: do_guest())
+    c.tag_bind(guest, "<Enter>", lambda _e: (c.itemconfigure(guest, fill="#a9c4e6"),
+                                             c.configure(cursor="hand2")))
+    c.tag_bind(guest, "<Leave>", lambda _e: (c.itemconfigure(guest, fill="#7f8ea6"),
+                                             c.configure(cursor="")))
+
+    foot = c.create_text(220, 476,
+                         text="密码只做本机校验、不上传；忘记密码可删 users.json 重置",
+                         fill="#66707e", font=(ui_font, 9), width=356)
+
+    # ---------- 行为 ----------
+    def set_tip(text: str, color: str = RED) -> None:
+        c.itemconfigure(tip, text=text, fill=color)
+
+    def set_mode(mode: str) -> None:
+        state["mode"] = mode
+        draw_tabs()
+        c.tag_raise("tabhit")
+        draw_button()
+        set_tip("")
+        entries["user"].focus_set()
+
+    def do_login() -> None:
+        u, p = entries["user"].get().strip(), entries["pw"].get()
+        if not u:
+            set_tip("请先填用户名")
+            return
         if not exists(u):
-            tip.configure(text="没有这个用户（第一次用请点「注册」）", fg=RED)
+            set_tip("没有这个用户（第一次用请点「注册」）")
             return
         if not verify(u, p):
-            tip.configure(text="密码不对", fg=RED)
+            set_tip("密码不对")
             return
         result["user"] = u
         win.destroy()
 
-    def do_register():
-        u, p = e_user.get().strip(), e_pw.get()
-        err = register(u, p)
+    def do_register() -> None:
+        err = register(entries["user"].get().strip(), entries["pw"].get())
         if err:
-            tip.configure(text=err, fg=RED)
+            set_tip(err)
             return
-        tip.configure(text=f"已注册「{u}」，正在进入…", fg=GREEN)
-        win.after(500, do_login)
+        set_tip("注册好了，正在进入…", GREEN)
+        win.after(420, do_login)
 
-    def do_guest():
+    def submit() -> None:
+        do_login() if state["mode"] == "login" else do_register()
+
+    def do_guest() -> None:
         result["user"] = ""
         win.destroy()
 
-    make("登录", do_login).pack(side="left")
-    make("注册", do_register, color=CARD, dark_text=False).pack(side="left", padx=8)
-    make("游客进入", do_guest, color=CARD, dark_text=False).pack(side="right")
+    draw_tabs()
+    draw_button()
 
-    tk.Label(win, text="密码只做本机校验、不上传；忘记密码可删 users.json 重置",
-             bg=BG, fg=MUTED, font=(FONT, 8)).pack(anchor="w", padx=22, pady=(8, 10))
+    # 主按钮整块可点 + 悬停高亮（用坐标判定，避免画布 item 抢事件）
+    def in_button(x: int, y: int) -> bool:
+        return 48 <= x <= 392 and 336 <= y <= 384
 
-    e_user.focus_set()
-    win.bind("<Return>", lambda _e: do_login())
+    def on_click(ev) -> None:
+        if in_button(ev.x, ev.y):
+            submit()
+
+    def on_motion(ev) -> None:
+        want = in_button(ev.x, ev.y)
+        if want != btn.get("hot"):
+            btn["hot"] = want
+            draw_button()
+            c.configure(cursor="hand2" if want else "")
+
+    c.bind("<Button-1>", on_click)
+    c.bind("<Motion>", on_motion)
+
+    entries["user"].focus_set()
+    win.bind("<Return>", lambda _e: submit())
     win.protocol("WM_DELETE_WINDOW", win.destroy)
-    win.grab_set()
+
+    def _center_keep() -> None:
+        win.geometry(f"{W}x{H}+{(sw - W) // 2}+{max(36, (sh - H) // 3)}")
+
+    win.after(30, _center_keep)
     root.wait_window(win)
     return result["user"]
