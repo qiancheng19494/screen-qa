@@ -195,23 +195,21 @@ def ask_login(root: tk.Tk) -> str | None:
     tab_items = {}
 
     def draw_tabs():
+        c.delete("tabfill")
         for name, box in tabs.items():
             x1, y1, x2, y2 = box
             for it in tab_items.pop(name, []):
                 c.delete(it)
             on = state["mode"] == name
             if on:
-                rr_grad(x1, y1, x2, y2, 9, "#2f5f9e", "#24476f")
-                rrect_outline(x1, y1, x2, y2, 9, "#4d8fd6")
+                rr_grad(x1, y1, x2, y2, 9, "#2f5f9e", "#24476f", tag="tabfill")
+                rrect_outline(x1, y1, x2, y2, 9, "#4d8fd6", tag="tabfill")
             color = "#eaf4ff" if on else "#8b97a9"
             it = c.create_text((x1 + x2) / 2, (y1 + y2) / 2,
                                text="登录" if name == "login" else "注册",
                                fill=color, font=(ui_font, 12, "bold"))
             tab_items[name] = [it]
-            c.tag_bind(it, "<Button-1>", lambda _e, n=name: set_mode(n))
-            hit = c.create_rectangle(x1, y1, x2, y2, fill="", outline="", tags=("tabhit", name))
-            c.tag_bind(hit, "<Button-1>", lambda _e, n=name: set_mode(n))
-            c.tag_bind(hit, "<Enter>", lambda _e, n=name: c.configure(cursor="hand2"))
+            pass
             c.tag_bind(it, "<Enter>", lambda _e, n=name: c.configure(cursor="hand2"))
             c.tag_bind(it, "<Leave>", lambda _e, n=name: c.configure(cursor=""))
 
@@ -266,8 +264,6 @@ def ask_login(root: tk.Tk) -> str | None:
             pass
         draw_eye()
 
-    c.tag_bind("eyeOpen", "<Button-1>", toggle_eye)
-    c.tag_bind("eyeClosed", "<Button-1>", toggle_eye)
     draw_eye()
 
     # ---------- 提示 / 主按钮 / 游客 ----------
@@ -285,11 +281,9 @@ def ask_login(root: tk.Tk) -> str | None:
                 "#79baff" if hot else "#6fb4ff", "#2f7df6" if not hot else "#3b8cff")
         rrect_outline(x1, y1, x2, y2, 12, "#9ccbff", width=1)
         label = "登录" if state["mode"] == "login" else "创建账号"
-        hit = c.create_rectangle(x1, y1, x2, y2, fill="", outline="", tags="btnhit")
         txt = c.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=label, fill="#06101f",
                             font=(ui_font, 12, "bold"))
-        btn_items["all"] = [hit, txt]
-        c.tag_raise("btnhit")
+        btn_items["all"] = [txt]
         for it in btn_items["all"]:
             c.tag_bind(it, "<Button-1>", lambda _e: submit())
             c.tag_bind(it, "<Enter>", lambda _e: (btn.update(hot=True), draw_button(),
@@ -299,11 +293,8 @@ def ask_login(root: tk.Tk) -> str | None:
 
     guest = c.create_text(220, 414, text="游客进入（数据留在根目录）", fill="#7f8ea6",
                           font=(ui_font, 9))
-    c.tag_bind(guest, "<Button-1>", lambda _e: do_guest())
-    c.tag_bind(guest, "<Enter>", lambda _e: (c.itemconfigure(guest, fill="#a9c4e6"),
-                                             c.configure(cursor="hand2")))
-    c.tag_bind(guest, "<Leave>", lambda _e: (c.itemconfigure(guest, fill="#7f8ea6"),
-                                             c.configure(cursor="")))
+    c.tag_bind(guest, "<Enter>", lambda _e: c.itemconfigure(guest, fill="#a9c4e6"))
+    c.tag_bind(guest, "<Leave>", lambda _e: c.itemconfigure(guest, fill="#7f8ea6"))
 
     foot = c.create_text(220, 476,
                          text="密码只做本机校验、不上传；忘记密码可删 users.json 重置",
@@ -316,7 +307,6 @@ def ask_login(root: tk.Tk) -> str | None:
     def set_mode(mode: str) -> None:
         state["mode"] = mode
         draw_tabs()
-        c.tag_raise("tabhit")
         draw_button()
         set_tip("")
         entries["user"].focus_set()
@@ -346,30 +336,50 @@ def ask_login(root: tk.Tk) -> str | None:
     def submit() -> None:
         do_login() if state["mode"] == "login" else do_register()
 
+    def _hit(x: int, y: int) -> str:
+        if 128 <= y <= 168:
+            if 52 <= x <= 218:
+                return "tab:login"
+            if 222 <= x <= 388:
+                return "tab:register"
+        if 336 <= y <= 384 and 48 <= x <= 392:
+            return "submit"
+        if 270 <= y <= 300 and 350 <= x <= 386:
+            return "eye"
+        if 400 <= y <= 430 and 130 <= x <= 310:
+            return "guest"
+        return ""
+
+    def on_click(event) -> None:
+        h = _hit(event.x, event.y)
+        if h == "tab:login":
+            set_mode("login")
+        elif h == "tab:register":
+            set_mode("register")
+        elif h == "submit":
+            submit()
+        elif h == "eye":
+            toggle_eye()
+        elif h == "guest":
+            do_guest()
+
+    def on_motion(event) -> None:
+        h = _hit(event.x, event.y)
+        want = h == "submit"
+        if want != btn.get("hot"):
+            btn["hot"] = want
+            draw_button()
+        c.configure(cursor="hand2" if h else "")
+
+    c.bind("<Button-1>", on_click)
+    c.bind("<Motion>", on_motion)
+
     def do_guest() -> None:
         result["user"] = ""
         win.destroy()
 
     draw_tabs()
     draw_button()
-
-    # 主按钮整块可点 + 悬停高亮（用坐标判定，避免画布 item 抢事件）
-    def in_button(x: int, y: int) -> bool:
-        return 48 <= x <= 392 and 336 <= y <= 384
-
-    def on_click(ev) -> None:
-        if in_button(ev.x, ev.y):
-            submit()
-
-    def on_motion(ev) -> None:
-        want = in_button(ev.x, ev.y)
-        if want != btn.get("hot"):
-            btn["hot"] = want
-            draw_button()
-            c.configure(cursor="hand2" if want else "")
-
-    c.bind("<Button-1>", on_click)
-    c.bind("<Motion>", on_motion)
 
     entries["user"].focus_set()
     win.bind("<Return>", lambda _e: submit())
