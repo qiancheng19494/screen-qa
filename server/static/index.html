@@ -25,7 +25,7 @@
   .hitem b{font-weight:600;font-size:14px}
   .hitem .sub{margin:2px 0 0}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
-  textarea{width:100%;min-height:110px;background:#0d1117;color:var(--tx);border:1px solid var(--line);
+  textarea{width:100%;min-height:110px;background:var(--card);color:var(--tx);border:1px solid var(--line);
            border-radius:8px;padding:10px;font:14px/1.5 inherit;resize:vertical}
   input[type=text],input[type=password]{width:100%;background:#0d1117;color:var(--tx);border:1px solid var(--line);
            border-radius:8px;padding:9px 10px;font:14px inherit;margin:4px 0 10px}
@@ -40,6 +40,85 @@
   .tag{display:inline-block;font-size:12px;color:var(--dim);border:1px solid var(--line);
        border-radius:20px;padding:1px 9px;margin-right:6px}
   .rowline{display:flex;gap:14px;flex-wrap:wrap;color:var(--dim);font-size:13px}
+  /* ===== 登录 / 注册（新） ===== */
+  .auth [hidden]{display:none !important}
+  .auth{position:relative;overflow:hidden;padding:20px;border-radius:16px;
+    background:radial-gradient(120% 150% at 100% 0%,rgba(77,157,255,.16),transparent 56%),var(--card);
+    border:1px solid var(--line);box-shadow:0 20px 44px -32px rgba(77,157,255,.6)}
+  .auth::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:16px;
+    background:linear-gradient(160deg,rgba(255,255,255,.07),transparent 42%)}
+  .auth-head{display:flex;gap:12px;align-items:center;position:relative}
+  .auth-logo{width:44px;height:44px;flex:0 0 auto;border-radius:13px;display:grid;place-items:center;color:#dceaff;
+    background:linear-gradient(145deg,#1d4b7f,#0e1a2b);
+    box-shadow:0 0 0 1px rgba(77,157,255,.35),0 10px 22px -14px rgba(77,157,255,.85)}
+  .auth-titles b{font-size:16px;letter-spacing:.2px}
+  .auth-titles .sub{margin:3px 0 0;font-size:12.5px;line-height:1.45}
+  .auth-tabs{display:flex;gap:6px;margin:16px 0 14px;padding:4px;border-radius:12px;
+    background:rgba(7,10,15,.55);border:1px solid var(--line);position:relative}
+  .auth-tab{flex:1;appearance:none;border:0;background:transparent;color:var(--dim);
+    font:600 14px/1 inherit;padding:10px 0;border-radius:9px;cursor:pointer;transition:color .18s,background .18s,box-shadow .18s}
+  .auth-tab:hover{color:var(--tx)}
+  .auth-tab.is-on{color:#eaf4ff;background:linear-gradient(145deg,rgba(77,157,255,.32),rgba(77,157,255,.13));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 8px 18px -14px rgba(77,157,255,.95)}
+  .field{position:relative;display:block;margin:0 0 12px}
+  .field input{width:100%;height:48px;padding:0 46px;border-radius:12px;border:1px solid var(--line);
+    background:rgba(8,11,16,.72);color:var(--tx);font:15px inherit;outline:none;
+    transition:border-color .18s,box-shadow .18s,background .18s}
+  .field input:hover{border-color:#2d3b50}
+  .field input:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(77,157,255,.17)}
+  .field .ico{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#7f8ea6;
+    display:grid;place-items:center;pointer-events:none;transition:color .18s}
+  .field:focus-within .ico{color:var(--ac)}
+  .field .lab{position:absolute;left:44px;top:50%;transform:translateY(-50%);color:#8794a8;
+    font-size:14.5px;pointer-events:none;padding:0 5px;border-radius:4px;
+    background:var(--card);transition:top .16s ease,font-size .16s ease,color .16s ease}
+  .field input:focus + .lab,
+  .field input:not(:placeholder-shown) + .lab{top:0;font-size:11.5px;color:var(--ac);letter-spacing:.3px}
+  .eye{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:34px;height:34px;
+    display:grid;place-items:center;border:0;border-radius:9px;background:transparent;color:#7f8ea6;cursor:pointer;
+    transition:color .18s,background .18s}
+  .eye:hover{color:var(--tx);background:rgba(120,150,190,.14)}
+  .eye.is-on{color:var(--ac)}
+  .auth-tip{display:flex;align-items:center;gap:7px;margin:2px 0 14px;font-size:12.5px;color:var(--dim)}
+  .auth-tip .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(61,220,132,.16)}
+  .auth-tip.err .dot{background:#ff6b6b;box-shadow:0 0 0 3px rgba(255,107,107,.16)}
+  .auth-btn{width:100%;height:47px;border:0;border-radius:12px;cursor:pointer;color:#06101f;
+    font:700 15px inherit;letter-spacing:.2px;display:flex;align-items:center;justify-content:center;gap:9px;
+    background:linear-gradient(135deg,#5cabff,#2f7df6);
+    box-shadow:0 14px 26px -18px rgba(77,157,255,1),inset 0 1px 0 rgba(255,255,255,.35);
+    transition:transform .16s,box-shadow .16s,filter .16s}
+  .auth-btn:hover{filter:brightness(1.06);transform:translateY(-1px)}
+  .auth-btn:active{transform:translateY(0) scale(.995)}
+  .auth-btn:disabled{opacity:.65;cursor:default;transform:none;filter:none}
+  .spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(6,16,31,.35);
+    border-top-color:#06101f;animation:spin .7s linear infinite;display:inline-block}
+  .spin[hidden]{display:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .auth-msg{min-height:18px;margin:10px 2px 0;font-size:13px;line-height:1.5;color:var(--dim);transition:color .18s}
+  .auth-msg.ok{color:var(--ok)}
+  .auth-msg.err{color:#ff7b7b}
+  .auth-foot{display:flex;justify-content:center;margin-top:6px}
+  .link{appearance:none;border:0;background:transparent;color:#8ab4e8;font:600 13px inherit;cursor:pointer;
+    padding:6px 4px;border-radius:7px;transition:color .18s}
+  .link:hover{color:#bcd9ff}
+  .auth-me{display:flex;align-items:center;gap:12px;margin-top:16px}
+  .avatar{width:42px;height:42px;flex:0 0 auto;border-radius:50%;display:grid;place-items:center;
+    font:700 17px/1 inherit;color:#06101f;background:linear-gradient(135deg,#7cc0ff,#2f7df6);
+    box-shadow:0 0 0 1px rgba(255,255,255,.22)}
+  .auth-me b{display:block;font-size:15px}
+  .auth-me .sub{margin:2px 0 0;font-size:12px}
+  .auth-out{margin-left:auto;height:34px;padding:0 13px;border-radius:9px;border:1px solid var(--line);
+    background:transparent;color:var(--dim);font:600 13px inherit;cursor:pointer;transition:color .18s,border-color .18s}
+  .auth-out:hover{color:var(--tx);border-color:#3a4b63}
+  .shake{animation:shake .34s ease}
+  @keyframes shake{20%{transform:translateX(-5px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
+  :root[data-theme="light"] .auth{background:radial-gradient(120% 150% at 100% 0%,rgba(37,99,235,.10),transparent 56%),var(--card)}
+  :root[data-theme="light"] .auth-logo{color:#fff;background:linear-gradient(145deg,#5cabff,#2563eb)}
+  :root[data-theme="light"] .field input{background:#fff;color:#0f172a}
+  :root[data-theme="light"] .auth-tabs{background:#eef2f8}
+  :root[data-theme="light"] .auth-tab.is-on{color:#0b3a7a;background:linear-gradient(145deg,rgba(37,99,235,.15),rgba(37,99,235,.07))}
+  :root[data-theme="light"] .auth-msg.err{color:#d33}
+  @media (max-width:520px){.auth{padding:16px}.auth-titles .sub{font-size:12px}}
 </style>
 </head>
 <body>
@@ -47,15 +126,59 @@
   <h1>屏幕问答 · 网页版</h1>
   <div class="sub">把题目粘进来（英文/中文都行）。手机上也能用。</div>
 
-  <div class="card" id="authCard">
-    <div style="font-weight:600;margin-bottom:6px">登录 / 注册（可选）</div>
-    <div class="sub" style="margin-bottom:8px">不登录也能试 3 次；登录后按额度使用，记录可同步到桌面端。</div>
-    <input type="text" id="name" placeholder="用户名" autocomplete="username">
-    <input type="password" id="pw" placeholder="密码（至少 6 位）" autocomplete="current-password">
-    <div class="row">
-      <button id="btnLogin">登录</button>
-      <button class="ghost" id="btnReg">注册</button>
-      <span id="authMsg" class="sub" style="margin:0"></span>
+  <div class="card auth" id="authCard">
+    <div class="auth-head">
+      <div class="auth-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2.6"/><path d="M8 21h8M12 17v4"/><path d="M8.4 10.4c.5-1.1 1.8-1.7 2.9-1.2 1 .4 1.4 1.4 1 2.3-.3.7-1.1 1-1.1 1.9"/><circle cx="11.2" cy="15.1" r=".55" fill="currentColor" stroke="none"/></svg>
+      </div>
+      <div class="auth-titles">
+        <b id="authTitle">登录屏幕问答</b>
+        <div class="sub" id="authSub">登录后按额度使用，作答记录可同步到桌面端</div>
+      </div>
+    </div>
+
+    <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+      <button type="button" class="auth-tab is-on" data-mode="login" role="tab" aria-selected="true">登录</button>
+      <button type="button" class="auth-tab" data-mode="register" role="tab" aria-selected="false">注册</button>
+    </div>
+
+    <form id="authForm" novalidate>
+      <label class="field" for="name">
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c.7-3.5 3.8-5.6 7.5-5.6s6.8 2.1 7.5 5.6"/></svg></span>
+        <input id="name" name="username" type="text" autocomplete="username" placeholder=" " maxlength="20" spellcheck="false" enterkeyhint="next">
+        <span class="lab">用户名</span>
+      </label>
+      <label class="field" for="pw">
+        <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10" width="15" height="10" rx="2.4"/><path d="M8 10V7.6a4 4 0 0 1 8 0V10"/><circle cx="12" cy="15" r="1.2" fill="currentColor" stroke="none"/></svg></span>
+        <input id="pw" name="password" type="password" autocomplete="current-password" placeholder=" " maxlength="64" enterkeyhint="go">
+        <span class="lab">密码</span>
+        <button type="button" class="eye" id="pwEye" aria-label="显示密码" aria-pressed="false">
+          <svg class="eye-on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="eye-off" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M3 3l18 18"/><path d="M10.6 6.1A9.6 9.6 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-3 3.7"/><path d="M6.3 6.7C3.9 8.3 2.5 12 2.5 12s3.5 6 9.5 6c1.3 0 2.5-.3 3.5-.7"/></svg>
+        </button>
+      </label>
+
+      <div class="auth-tip" id="authTip"><span class="dot"></span><span id="authHint">不登录也能免费试 3 次</span></div>
+
+      <button type="submit" class="auth-btn" id="btnSubmit">
+        <span class="spin" id="authSpin" aria-hidden="true" hidden></span>
+        <span id="btnSubmitText">登录</span>
+      </button>
+    </form>
+
+    <div class="auth-msg" id="authMsg" role="status" aria-live="polite"></div>
+
+    <div class="auth-foot" id="authFoot">
+      <button type="button" class="link" id="btnSwap">还没有账号？立即注册</button>
+    </div>
+
+    <div class="auth-me" id="authMe" hidden>
+      <div class="avatar" id="authAvatar" aria-hidden="true">U</div>
+      <div>
+        <b id="authName">—</b>
+        <div class="sub" id="authMeSub">已登录 · 作答记录会自动同步</div>
+      </div>
+      <button type="button" class="auth-out" id="btnLogout">退出</button>
     </div>
   </div>
 
@@ -106,23 +229,153 @@ const $ = (id) => document.getElementById(id);
 bindSamples();
 let token = localStorage.getItem("sqa_token") || "";
 const H = () => token ? {"Authorization": "Bearer " + token} : {};
+window.H = H;   // 增强脚本（webplus）里也要能带上登录令牌
 
-$("btnLogin").onclick = async () => {
-  const r = await fetch("/api/login", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({name:$("name").value, password:$("pw").value})});
-  const j = await r.json();
-  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats(); loadHistory();
-    $("authMsg").textContent = "已登录：" + j.user.name; }
-  else $("authMsg").textContent = j.error || "登录失败";
+// ===== 登录 / 注册 =====
+const authEls = {
+  card: $("authCard"), form: $("authForm"), name: $("name"), pw: $("pw"),
+  submit: $("btnSubmit"), submitText: $("btnSubmitText"), spin: $("authSpin"),
+  msg: $("authMsg"), tip: $("authTip"), hint: $("authHint"),
+  tabs: Array.from(document.querySelectorAll(".auth-tab")),
+  title: $("authTitle"), sub: $("authSub"), foot: $("authFoot"), swap: $("btnSwap"),
+  me: $("authMe"), meName: $("authName"), avatar: $("authAvatar"), logout: $("btnLogout"),
+  eye: $("pwEye"),
 };
-$("btnReg").onclick = async () => {
-  const r = await fetch("/api/register", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({name:$("name").value, password:$("pw").value})});
-  const j = await r.json();
-  if (j.token) { token = j.token; localStorage.setItem("sqa_token", token); loadStats(); loadHistory();
-    $("authMsg").textContent = "注册成功：" + j.user.name; }
-  else $("authMsg").textContent = j.error || "注册失败";
-};
+const AUTH = { mode: "login", busy: false };
+
+function authMsg(text, kind) {
+  authEls.msg.textContent = text || "";
+  authEls.msg.className = "auth-msg" + (kind ? " " + kind : "");
+  authEls.tip.className = "auth-tip" + (kind === "err" ? " err" : "");
+  if (kind === "err") {
+    authEls.card.classList.remove("shake");
+    void authEls.card.offsetWidth;
+    authEls.card.classList.add("shake");
+  }
+}
+function setMode(mode) {
+  if (AUTH.busy) return;
+  AUTH.mode = mode;
+  authEls.tabs.forEach(function (t) {
+    const on = t.dataset.mode === mode;
+    t.classList.toggle("is-on", on);
+    t.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  authEls.title.textContent = mode === "login" ? "登录屏幕问答" : "注册屏幕问答";
+  authEls.sub.textContent = mode === "login"
+    ? "登录后按额度使用，作答记录可同步到桌面端"
+    : "注册即送每天 30 万 tokens 额度，记录自动同步";
+  authEls.pw.setAttribute("autocomplete", mode === "login" ? "current-password" : "new-password");
+  authEls.swap.textContent = mode === "login" ? "还没有账号？立即注册" : "已经有账号？直接登录";
+  authEls.submitText.textContent = mode === "login" ? "登录" : "创建账号";
+  authEls.hint.textContent = mode === "login" ? "不登录也能免费试 3 次" : "用户名 2–20 位，密码至少 6 位";
+  authMsg("");
+}
+function setBusy(busy) {
+  AUTH.busy = busy;
+  authEls.submit.disabled = busy;
+  authEls.spin.hidden = !busy;
+  if (busy) authEls.submitText.textContent = AUTH.mode === "login" ? "登录中…" : "注册中…";
+  else authEls.submitText.textContent = AUTH.mode === "login" ? "登录" : "创建账号";
+}
+function applyLoggedIn(name) {
+  authEls.form.hidden = true;
+  authEls.foot.hidden = true;
+  authEls.me.hidden = false;
+  document.querySelector(".auth-tabs").hidden = true;
+  authEls.title.textContent = "欢迎回来";
+  authEls.sub.textContent = "今天也把题目交给它吧";
+  authEls.meName.textContent = name || "已登录";
+  authEls.avatar.textContent = (name || "U").slice(0, 1).toUpperCase();
+  authMsg("");
+}
+function applyLoggedOut() {
+  token = "";
+  try { localStorage.removeItem("sqa_token"); localStorage.removeItem("sqa_user"); } catch (e) {}
+  authEls.form.hidden = false;
+  authEls.foot.hidden = false;
+  authEls.me.hidden = true;
+  document.querySelector(".auth-tabs").hidden = false;
+  $("statCard").style.display = "none";
+  $("histCard").style.display = "none";
+  setMode("login");
+}
+async function submitAuth() {
+  if (AUTH.busy) return;
+  const name = authEls.name.value.trim();
+  const pw = authEls.pw.value;
+  if (!name) { authMsg("请先填用户名", "err"); authEls.name.focus(); return; }
+  if (name.length < 2) { authMsg("用户名至少 2 个字符", "err"); authEls.name.focus(); return; }
+  if (pw.length < 6) { authMsg("密码至少 6 位", "err"); authEls.pw.focus(); return; }
+  setBusy(true);
+  authMsg("");
+  try {
+    const endpoint = AUTH.mode === "login" ? "/api/login" : "/api/register";
+    const r = await fetch(endpoint, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: name, password: pw})
+    });
+    let j = {};
+    try { j = await r.json(); } catch (e) {}
+    if (j.token) {
+      token = j.token;
+      const shown = (j.user && j.user.name) || name;
+      try { localStorage.setItem("sqa_token", token); localStorage.setItem("sqa_user", shown); } catch (e) {}
+      applyLoggedIn(shown);
+      authMsg(AUTH.mode === "login" ? "登录成功" : "注册成功，已自动登录", "ok");
+      loadStats(); loadHistory();
+      return;
+    }
+    authMsg(j.error || (AUTH.mode === "login" ? "登录失败：用户名或密码不对" : "注册失败：换个用户名试试"), "err");
+  } catch (err) {
+    authMsg("连不上服务器，请检查网络后重试", "err");
+  } finally {
+    setBusy(false);
+  }
+}
+
+authEls.form.addEventListener("submit", function (e) { e.preventDefault(); submitAuth(); });
+authEls.swap.addEventListener("click", function () {
+  setMode(AUTH.mode === "login" ? "register" : "login");
+});
+authEls.tabs.forEach(function (t) {
+  t.addEventListener("click", function () { setMode(t.dataset.mode); });
+});
+authEls.eye.addEventListener("click", function () {
+  const show = authEls.pw.type === "password";
+  authEls.pw.type = show ? "text" : "password";
+  authEls.eye.classList.toggle("is-on", show);
+  authEls.eye.setAttribute("aria-pressed", show ? "true" : "false");
+  authEls.eye.setAttribute("aria-label", show ? "隐藏密码" : "显示密码");
+  const on = authEls.eye.querySelector(".eye-on"), off = authEls.eye.querySelector(".eye-off");
+  if (on) on.hidden = show;
+  if (off) off.hidden = !show;
+  authEls.pw.focus({ preventScroll: true });
+});
+authEls.logout.addEventListener("click", function () {
+  applyLoggedOut();
+  authMsg("已退出登录");
+});
+
+// 恢复上次的登录状态，并静默校验令牌
+(function initAuthState() {
+  if (!token) return;
+  let cached = "已登录";
+  try { cached = localStorage.getItem("sqa_user") || cached; } catch (e) {}
+  applyLoggedIn(cached);
+  fetch("/api/me", { headers: H() }).then(function (r) {
+    if (r.status === 401) { applyLoggedOut(); return null; }
+    return r.json();
+  }).then(function (j) {
+    if (!j || !j.user) return;
+    const n = j.user.name || "";
+    if (!n) return;
+    try { localStorage.setItem("sqa_user", n); } catch (e) {}
+    authEls.meName.textContent = n;
+    authEls.avatar.textContent = n.slice(0, 1).toUpperCase();
+  }).catch(function () {});
+})();
 
 async function solveText(t){
   $("msg").textContent = "思考中…"; $("btnAsk").disabled = true;
@@ -232,7 +485,13 @@ async function loadStats() {
 if (token) loadStats(); loadHistory();
 </script>
 <style id="__webplus_css">
-  :root[data-theme="light"]{--bg:#f6f8fb;--fg:#111827;--card:#ffffff;--line:#e3e9f2;--sub:#5b6472;--accent:#2563eb}
+  :root[data-theme="light"]{--bg:#f6f8fb;--fg:#111827;--card:#ffffff;--line:#e3e9f2;--sub:#5b6472;--accent:#2563eb;
+    --tx:#111827;--dim:#5b6472;--ac:#2563eb;--ok:#12915a}
+  :root[data-theme="light"] textarea{background:#fff;color:#0f172a;border-color:#e3e9f2}
+  :root[data-theme="light"] .auth-titles b{color:#0f172a}
+  :root[data-theme="light"] .link{color:#2563eb}
+  :root[data-theme="light"] .auth-out:hover{border-color:#c3d2e6;color:#0f172a}
+  :root[data-theme="light"] .auth-btn{box-shadow:0 14px 26px -18px rgba(37,99,235,.9),inset 0 1px 0 rgba(255,255,255,.5)}
   #fabs{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;z-index:9}
   #fabs button{width:auto;padding:8px 12px;border-radius:999px;background:var(--card);color:var(--fg);border:1px solid var(--line);font-size:13px;cursor:pointer}
   .mini{padding:5px 10px;font-size:12px;border-radius:999px;background:transparent;border:1px solid var(--line);color:var(--sub);cursor:pointer;margin-left:8px}
