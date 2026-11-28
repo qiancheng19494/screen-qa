@@ -410,6 +410,9 @@ class Handler(BaseHTTPRequestHandler):
             usage = out.get("usage") or {}
             pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
             store.charge_usage(int(u["id"]), str(b.get("model") or ""), pt, ct, _cost(pt, ct))
+            answer, fill = self._parse(out.get("content") or "")
+            self._save_record(u, self._last_user_text(b), answer, fill,
+                              str(b.get("model") or ""), pt, ct)
             return self._json({"id": "sqa", "choices": [{"index": 0, "message":
                                {"role": "assistant", "content": out.get("content") or ""},
                                "finish_reason": "stop"}], "usage": usage})
@@ -492,6 +495,19 @@ class Handler(BaseHTTPRequestHandler):
         ans = _ANS_RE.search(content)
         return (ans.group(1).strip() if ans else content[:400],
                 fill.group(1).strip() if fill else "")
+
+    def _last_user_text(self, body) -> str:
+        messages = body.get("messages") or []
+        for message in reversed(messages):
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+                return " ".join(part for part in parts if part).strip()
+        return ""
 
     def _save_record(self, u, text, answer, fill, model, pt, ct) -> None:
         if not u:
