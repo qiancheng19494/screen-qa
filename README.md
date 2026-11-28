@@ -563,3 +563,24 @@ Tk 版仍然保留（`python app.py` / `启动.bat`），WebView 出问题随时
 - 连续截图、判卷、练一练、账本目前先在 Tk 版用，WebView 版正在补齐
 
 **v2.21.1：WebView 版补齐弹层**（判卷 / 练一练 / 账本 / 历史 / 最近题图 / 函数图像 / 卡片 / CSV / 自检）——都走同一个弹层组件，`Esc` 关闭；账本是 30 天柱状图 + 累计/今日/按模型，历史按时间列出，最近题图两列缩略图。
+
+
+## 服务器账号管理后台（/admin）
+
+服务器版账号数据库是 SQLite（`server/data/sqa.db`，Docker 卷持久化），不需要额外的 Access 文件。
+新增的管理后台在 `https://q.wuyolo.com/admin`，用环境变量 `SQA_ADMIN_TOKEN` 里的令牌进入，可以：
+
+- 看账号总数 / 今日新增 / 有效令牌 / 今日与累计 tokens、费用
+- 搜索账号、改每日额度、停用或恢复账号（停用后旧令牌立即失效）、踢下线
+- 一键导出 CSV
+
+部署（服务器上执行）：
+
+```bash
+cd <服务器上的 screen-qa>/server
+git pull
+grep -q '^SQA_ADMIN_TOKEN=' .env || echo 'SQA_ADMIN_TOKEN=换成一串强随机字符' >> .env
+docker compose up -d --build
+```
+
+然后打开 https://q.wuyolo.com/admin 输入同一个令牌即可。
